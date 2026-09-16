@@ -11,7 +11,9 @@ Open Terminal and run:
 ```
 
 This installs Homebrew (and Xcode Command Line Tools), clones this repo to
-`~/git/cowlabs/bootstrap-mac`, and runs `setup.sh`.
+`~/git/cowlabs/bootstrap-mac`, and runs `setup.sh`, which prompts for the
+machine's role: `dev` (remote development: builds, tests, evals) or `prod`
+(Aldine production deployment). The role is persisted to `~/.mac-role`.
 
 ## Converge an existing machine
 
@@ -26,9 +28,10 @@ Everything is idempotent.
 ## What's in here
 
 - `bootstrap.sh` — curl-able entry point (Homebrew + clone + hand-off)
-- `setup.sh` — main setup: `brew bundle`, macOS defaults, Remote Login (SSH),
-  mise global runtimes, Tailscale
-- `Brewfile` — declarative package list (CLI tools, apps)
+- `setup.sh` — main setup: `brew bundle`, macOS defaults, security lockdown,
+  headless server behaviour, Remote Login (SSH), Tailscale
+- `Brewfile` — packages for all machines
+- `Brewfile.dev` — development toolchain, dev role only
 
 ## Manual steps after setup
 
