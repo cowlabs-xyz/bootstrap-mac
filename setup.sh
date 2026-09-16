@@ -82,8 +82,22 @@ if fdesetup status | grep -q "FileVault is On"; then
 fi
 
 echo "==> Enabling Remote Login (SSH)"
-if [ "$(sudo systemsetup -getremotelogin | awk '{print $NF}')" != "On" ]; then
-  sudo systemsetup -setremotelogin on
+# `systemsetup -setremotelogin` refuses to run without Full Disk Access, which
+# only a person at the GUI or an MDM profile can grant. Enable the sshd
+# LaunchDaemon directly instead: launchd needs no such privilege.
+if sudo launchctl print system/com.openssh.sshd &>/dev/null; then
+  echo "    already on"
+else
+  sudo launchctl enable system/com.openssh.sshd || true
+  sudo launchctl bootstrap system /System/Library/LaunchDaemons/ssh.plist 2>/dev/null || true
+  if sudo launchctl print system/com.openssh.sshd &>/dev/null; then
+    echo "    on"
+  else
+    echo "    FAILED to enable Remote Login. Turn it on by hand:"
+    echo "      System Settings > General > Sharing > Remote Login"
+    echo "    Or grant Full Disk Access to Terminal (System Settings > Privacy &"
+    echo "    Security > Full Disk Access), then: sudo systemsetup -setremotelogin on"
+  fi
 fi
 
 echo "==> Ollama"

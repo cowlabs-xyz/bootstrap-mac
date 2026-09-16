@@ -47,6 +47,17 @@ Aldine over SSH:
 
 Verify with `cd ~/git/cowlabs/aldine-v2 && mise run build && mise run test`.
 
+## Remote Login and Full Disk Access
+
+`systemsetup -setremotelogin` fails without Full Disk Access, which no script can
+grant itself — only a person at the GUI or an MDM profile can. `setup.sh`
+therefore enables the `com.openssh.sshd` LaunchDaemon through `launchctl`, which
+carries no such requirement.
+
+If that ever fails, turn Remote Login on by hand in System Settings → General →
+Sharing. Run the first setup at the machine itself, since SSH is not available
+until this step succeeds.
+
 ## Manual steps after setup
 
 - Log in to Tailscale (disable key expiry for the node in the admin console)
