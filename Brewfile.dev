@@ -1,7 +1,9 @@
 # Dev machines only: development toolchain
+#
+# Only tools that must exist before mise runs belong here. Aldine's own
+# toolchain (Go, Node, pnpm, buf, golangci-lint) is pinned in the repo's
+# mise.toml and installed by `mise install`, not by Homebrew.
 brew "gh"
 brew "mise"
-
-# Mac App Store (requires being signed into the App Store)
-# brew "mas"
-# mas "Xcode", id: 497799835
+# Inspecting the box SQLite database (newer than the macOS built-in)
+brew "sqlite"

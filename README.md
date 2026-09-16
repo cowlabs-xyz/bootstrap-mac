@@ -33,10 +33,26 @@ Everything is idempotent.
 - `Brewfile` — packages for all machines
 - `Brewfile.dev` — development toolchain, dev role only
 
+## Dev machines
+
+The `dev` role additionally clones [aldine-v2](https://github.com/cowlabs-xyz/aldine-v2)
+to `~/git/cowlabs/aldine-v2` and provisions it, so the machine can build and run
+Aldine over SSH:
+
+- `gh auth login` (device flow) for the private repo clone
+- `mise install` — Go, Node, pnpm, buf and golangci-lint at the versions
+  `aldine-v2/mise.toml` pins. Homebrew installs none of these.
+- `mise run setup` — pnpm dependencies and the Playwright browser
+- `mise activate` added to `~/.zshrc`, so SSH sessions get the pinned tools
+
+Verify with `cd ~/git/cowlabs/aldine-v2 && mise run build && mise run test`.
+
 ## Manual steps after setup
 
-- Log in to Tailscale from the menu bar item (enable "Start on login")
+- Log in to Tailscale (disable key expiry for the node in the admin console)
+- Set a hostname with `sudo scutil --set ComputerName/HostName/LocalHostName`
+- Enable auto-login, so the Ollama service restarts after an unattended reboot
+- Pull the Ollama models the box needs: `ollama pull <model>`
 - Enable Screen Sharing in System Settings → General → Sharing, if wanted
-- Sign in to the App Store before uncommenting the `mas` entries in the Brewfile
 
 No secrets belong in this repo — it is public.

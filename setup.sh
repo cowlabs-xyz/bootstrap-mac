@@ -86,9 +86,29 @@ if [ "$(sudo systemsetup -getremotelogin | awk '{print $NF}')" != "On" ]; then
   sudo systemsetup -setremotelogin on
 fi
 
+echo "==> Ollama"
+# User-level service, so models live in ~/.ollama. Needs a login session:
+# enable auto-login (see manual steps) so it survives an unattended reboot.
+brew services list | grep -qE "^ollama +started" || brew services start ollama
+
 if [ "$ROLE" = "dev" ]; then
-  echo "==> Global mise runtimes"
-  mise use -g node@22 python@3.12
+  echo "==> Aldine toolchain"
+  # Activate mise in the login shell, so SSH sessions get the pinned tools
+  if ! grep -q "mise activate" "$HOME/.zshrc" 2>/dev/null; then
+    echo 'eval "$(mise activate zsh)"' >> "$HOME/.zshrc"
+  fi
+  ALDINE_DIR="$HOME/git/cowlabs/aldine-v2"
+  if [ ! -d "$ALDINE_DIR/.git" ]; then
+    gh auth status &>/dev/null || gh auth login --hostname github.com --git-protocol https --web
+    gh auth setup-git
+    mkdir -p "$(dirname "$ALDINE_DIR")"
+    gh repo clone cowlabs-xyz/aldine-v2 "$ALDINE_DIR"
+  fi
+  # mise refuses to run an untrusted config file
+  mise trust "$ALDINE_DIR/mise.toml"
+  # Go, Node, pnpm, buf and golangci-lint at the versions the repo pins,
+  # then pnpm deps and the Playwright browser
+  (cd "$ALDINE_DIR" && mise install && mise run setup)
 fi
 
 echo "==> Tailscale"
@@ -103,5 +123,9 @@ echo "  - Tailscale: log in (or 'tailscale up --auth-key=...' for unattended);"
 echo "    disable key expiry for this node in the admin console"
 echo "  - Set a hostname: sudo scutil --set ComputerName/HostName/LocalHostName"
 echo "  - Enable Screen Sharing (System Settings > General > Sharing) if wanted"
-echo "  - Consider auto-login (System Settings > Users & Groups) so launchd user"
-echo "    agents / GUI apps come back after an unattended reboot"
+echo "  - Enable auto-login (System Settings > Users & Groups) so the Ollama"
+echo "    service and other user agents come back after an unattended reboot"
+echo "  - Pull the Ollama model(s) this box needs: ollama pull <model>"
+if [ "$ROLE" = "dev" ]; then
+  echo "  - Verify the toolchain: cd ~/git/cowlabs/aldine-v2 && mise run build && mise run test"
+fi
