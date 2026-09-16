@@ -135,9 +135,18 @@ EOF
     chmod 600 "$HOME/.ssh/config"
   fi
 
+  # ssh -T exits 1 even when it authenticates, because GitHub refuses shell
+  # access. Under pipefail, `ssh | grep` would therefore always look like a
+  # failure, so capture the output and match it instead.
+  deploy_key_ready() {
+    local out
+    out=$(ssh -T -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 \
+      "git@$SSH_ALIAS" 2>&1 || true)
+    [[ "$out" == *"successfully authenticated"* ]]
+  }
+
   # Wait until the public key is registered on the repo
-  until ssh -T -o StrictHostKeyChecking=accept-new "git@$SSH_ALIAS" 2>&1 |
-    grep -q "successfully authenticated"; do
+  until deploy_key_ready; do
     echo
     echo "    Add this deploy key to aldine-v2, with write access:"
     echo "    https://github.com/cowlabs-xyz/aldine-v2/settings/keys/new"
