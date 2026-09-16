@@ -100,9 +100,39 @@ else
   fi
 fi
 
+echo "==> Tailscale"
+# A system daemon, so it starts at boot with no login session. This is the open
+# source formula, not the GUI cask: only this variant serves Tailscale SSH on
+# macOS, and the cask would need a GUI to log in.
+sudo brew services start tailscale &>/dev/null || true
+for _ in $(seq 1 15); do
+  [ -S /var/run/tailscaled.socket ] && break
+  sleep 1
+done
+
+if tailscale status &>/dev/null; then
+  echo "    already connected"
+else
+  # A tagged auth key gives the node the identity of tag:aldine-$ROLE rather
+  # than of a user account, and tagged nodes never expire. The key is a secret:
+  # pass it as TS_AUTHKEY, and never commit one to this public repo.
+  if [ -z "${TS_AUTHKEY:-}" ]; then
+    echo "    Create a reusable auth key tagged 'tag:aldine-$ROLE':"
+    echo "    https://login.tailscale.com/admin/settings/keys"
+    read -rsp "    Auth key (tskey-auth-...): " TS_AUTHKEY
+    echo
+  fi
+  # --ssh serves SSH over the tailnet, authorised by the policy file instead of
+  # authorized_keys. Native Remote Login stays on above as a fallback.
+  sudo tailscale up --ssh --auth-key="$TS_AUTHKEY" --hostname="$(hostname -s)"
+fi
+# Let this user run tailscale without sudo
+sudo tailscale set --operator="$USER" || true
+
 echo "==> Ollama"
-# User-level service, so models live in ~/.ollama. Needs a login session:
-# enable auto-login (see manual steps) so it survives an unattended reboot.
+# A user agent, not a system daemon: Metal GPU access needs a login session, and
+# a root LaunchDaemon would fall back to CPU. Models live in ~/.ollama. Enable
+# auto-login (see manual steps) so it returns after an unattended reboot.
 brew services list | grep -qE "^ollama +started" || brew services start ollama
 
 if [ "$ROLE" = "dev" ]; then
@@ -167,20 +197,12 @@ EOF
   (cd "$ALDINE_DIR" && mise install && mise run setup)
 fi
 
-echo "==> Tailscale"
-if ! pgrep -x Tailscale &>/dev/null; then
-  open -a Tailscale
-  echo "    Log in via the Tailscale menu bar item, and enable 'Start on login'."
-fi
-
 echo
 echo "Done. Remaining manual steps:"
-echo "  - Tailscale: log in (or 'tailscale up --auth-key=...' for unattended);"
-echo "    disable key expiry for this node in the admin console"
 echo "  - Set a hostname: sudo scutil --set ComputerName/HostName/LocalHostName"
 echo "  - Enable Screen Sharing (System Settings > General > Sharing) if wanted"
-echo "  - Enable auto-login (System Settings > Users & Groups) so the Ollama"
-echo "    service and other user agents come back after an unattended reboot"
+echo "  - Enable auto-login (System Settings > Users & Groups), so the Ollama"
+echo "    user agent comes back after an unattended reboot"
 echo "  - Pull the Ollama model(s) this box needs: ollama pull <model>"
 if [ "$ROLE" = "dev" ]; then
   echo "  - Verify the toolchain: cd ~/git/cowlabs/aldine-v2 && mise run build && mise run test"

@@ -92,6 +92,57 @@ Host dev-box prod-box
 Forward the agent only to machines you trust: root on the far end can use it
 while you are connected.
 
+## Tailscale
+
+Machines join the tailnet as **tagged nodes**, not as your user account. A
+tagged node belongs to its tag, so it survives any change to a person's account,
+and its key never expires. An untagged node is owned by whoever logged it in.
+
+Define the tags once in the tailnet policy file:
+
+```json
+"tagOwners": {
+  "tag:aldine-dev":  ["your-user@example.com"],
+  "tag:aldine-prod": ["your-user@example.com"]
+}
+```
+
+Then create a reusable auth key carrying `tag:aldine-dev` or `tag:aldine-prod`
+at [the admin console](https://login.tailscale.com/admin/settings/keys), and
+give it to `setup.sh`:
+
+```bash
+TS_AUTHKEY=tskey-auth-... ./setup.sh dev
+```
+
+`setup.sh` prompts for the key if the variable is not set. **Never commit an
+auth key. This repo is public.**
+
+Tailscale runs as a system daemon (`sudo brew services start tailscale`), so it
+connects at boot with no login session. This is the open source `tailscale`
+formula rather than the GUI cask, because only that variant serves Tailscale SSH
+on macOS.
+
+### Tailscale SSH
+
+`setup.sh` runs `tailscale up --ssh`, so SSH access is granted by the tailnet
+policy file rather than by `authorized_keys`. Nothing needs distributing to each
+machine. Add a rule such as:
+
+```json
+"ssh": [
+  {
+    "action": "accept",
+    "src":    ["autogroup:member"],
+    "dst":    ["tag:aldine-dev", "tag:aldine-prod"],
+    "users":  ["autogroup:nonroot"]
+  }
+]
+```
+
+Native Remote Login stays enabled as a fallback, so a Tailscale outage does not
+lock you out of a machine on the local network.
+
 ## Remote Login and Full Disk Access
 
 `systemsetup -setremotelogin` fails without Full Disk Access, which no script can
@@ -105,9 +156,10 @@ until this step succeeds.
 
 ## Manual steps after setup
 
-- Log in to Tailscale (disable key expiry for the node in the admin console)
 - Set a hostname with `sudo scutil --set ComputerName/HostName/LocalHostName`
-- Enable auto-login, so the Ollama service restarts after an unattended reboot
+- Enable auto-login, so the Ollama agent restarts after an unattended reboot.
+  Ollama runs as a user agent, not a system daemon, because Metal GPU access
+  needs a login session; as a root daemon it would fall back to the CPU.
 - Pull the Ollama models the box needs: `ollama pull <model>`
 - Enable Screen Sharing in System Settings → General → Sharing, if wanted
 
