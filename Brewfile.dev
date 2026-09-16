@@ -3,7 +3,9 @@
 # Only tools that must exist before mise runs belong here. Aldine's own
 # toolchain (Go, Node, pnpm, buf, golangci-lint) is pinned in the repo's
 # mise.toml and installed by `mise install`, not by Homebrew.
-brew "gh"
+#
+# No gh: it authenticates with an account-wide token, which these machines
+# must not hold. Run gh from your laptop instead.
 brew "mise"
 # Inspecting the box SQLite database (newer than the macOS built-in)
 brew "sqlite"

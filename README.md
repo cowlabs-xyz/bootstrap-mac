@@ -39,13 +39,58 @@ The `dev` role additionally clones [aldine-v2](https://github.com/cowlabs-xyz/al
 to `~/git/cowlabs/aldine-v2` and provisions it, so the machine can build and run
 Aldine over SSH:
 
-- `gh auth login` (device flow) for the private repo clone
+- a deploy key for the clone (see below)
 - `mise install` — Go, Node, pnpm, buf and golangci-lint at the versions
   `aldine-v2/mise.toml` pins. Homebrew installs none of these.
 - `mise run setup` — pnpm dependencies and the Playwright browser
 - `mise activate` added to `~/.zshrc`, so SSH sessions get the pinned tools
 
 Verify with `cd ~/git/cowlabs/aldine-v2 && mise run build && mise run test`.
+
+## GitHub access
+
+These machines never hold an account-wide GitHub credential. `gh auth login`
+would grant one: OAuth scopes such as `repo` cover every repository the account
+can reach, and they cannot be narrowed to one repo. `gh` is therefore not
+installed. Run it from your laptop.
+
+Instead `setup.sh` generates a **deploy key** per machine, at
+`~/.ssh/aldine_deploy`, and prints the public half for you to add at
+[aldine-v2 → Settings → Deploy keys](https://github.com/cowlabs-xyz/aldine-v2/settings/keys/new).
+Allow write access so the machine can push. The key reaches that one repository
+and nothing else, and you revoke it per machine from that same page. A deploy
+key must be unique across GitHub, so each machine needs its own.
+
+The key sits behind an SSH host alias, so it never competes with a forwarded
+agent:
+
+```
+Host github.com-aldine        # the deploy key, IdentitiesOnly
+Host github.com               # untouched: a forwarded agent serves this
+```
+
+The Aldine remote is therefore `git@github.com-aldine:cowlabs-xyz/aldine-v2.git`.
+
+### Agent forwarding for everything else
+
+For work beyond Aldine — other repos, other hosts — forward your laptop's agent
+rather than putting more keys on the machine:
+
+```bash
+ssh -A dev-box
+```
+
+Nothing is stored on the box and access ends with the session. `sshd` allows
+agent forwarding by default, so no server-side change is needed. Make it
+automatic from your laptop's `~/.ssh/config`:
+
+```
+Host dev-box prod-box
+  ForwardAgent yes
+```
+
+Forward the agent only to machines you trust: root on the far end can use it
+while you are connected.
 
 ## Remote Login and Full Disk Access
 

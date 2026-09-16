@@ -112,11 +112,44 @@ if [ "$ROLE" = "dev" ]; then
     echo 'eval "$(mise activate zsh)"' >> "$HOME/.zshrc"
   fi
   ALDINE_DIR="$HOME/git/cowlabs/aldine-v2"
+  DEPLOY_KEY="$HOME/.ssh/aldine_deploy"
+  SSH_ALIAS="github.com-aldine"
+
+  # A deploy key reaches aldine-v2 and nothing else, so this machine holds no
+  # account-wide GitHub credential. It lives behind a Host alias, so plain
+  # github.com stays free for a forwarded agent (ssh -A) to serve.
+  mkdir -p "$HOME/.ssh"
+  chmod 700 "$HOME/.ssh"
+  if [ ! -f "$DEPLOY_KEY" ]; then
+    ssh-keygen -t ed25519 -f "$DEPLOY_KEY" -N "" -C "aldine-deploy-$(hostname -s)"
+  fi
+  if ! grep -q "^Host $SSH_ALIAS\$" "$HOME/.ssh/config" 2>/dev/null; then
+    cat >> "$HOME/.ssh/config" <<EOF
+
+Host $SSH_ALIAS
+  HostName github.com
+  User git
+  IdentityFile $DEPLOY_KEY
+  IdentitiesOnly yes
+EOF
+    chmod 600 "$HOME/.ssh/config"
+  fi
+
+  # Wait until the public key is registered on the repo
+  until ssh -T -o StrictHostKeyChecking=accept-new "git@$SSH_ALIAS" 2>&1 |
+    grep -q "successfully authenticated"; do
+    echo
+    echo "    Add this deploy key to aldine-v2, with write access:"
+    echo "    https://github.com/cowlabs-xyz/aldine-v2/settings/keys/new"
+    echo
+    cat "$DEPLOY_KEY.pub"
+    echo
+    read -rp "    Press enter once it is added: "
+  done
+
   if [ ! -d "$ALDINE_DIR/.git" ]; then
-    gh auth status &>/dev/null || gh auth login --hostname github.com --git-protocol https --web
-    gh auth setup-git
     mkdir -p "$(dirname "$ALDINE_DIR")"
-    gh repo clone cowlabs-xyz/aldine-v2 "$ALDINE_DIR"
+    git clone "git@$SSH_ALIAS:cowlabs-xyz/aldine-v2.git" "$ALDINE_DIR"
   fi
   # mise refuses to run an untrusted config file
   mise trust "$ALDINE_DIR/mise.toml"
