@@ -25,13 +25,26 @@ cd ~/git/cowlabs/bootstrap-mac && git pull && ./setup.sh
 
 Everything is idempotent.
 
+## Keep a machine current
+
+```bash
+cd ~/git/cowlabs/bootstrap-mac && ./update.sh
+```
+
+Pulls this repo, upgrades Homebrew packages and, on `dev`, the Aldine
+toolchain. Whatever a machine hasn't got is skipped and listed, so this runs
+before `setup.sh` as well as after. macOS updates are listed but not installed
+unless you pass `--macos`, which reboots.
+
 ## What's in here
 
 - `bootstrap.sh` — curl-able entry point (Homebrew + clone + hand-off)
+- `update.sh` — routine updates: this repo, Homebrew, the toolchain, macOS
 - `setup.sh` — main setup: `brew bundle`, macOS defaults, security lockdown,
   headless server behaviour, Remote Login (SSH), Tailscale
 - `Brewfile` — packages for all machines
 - `Brewfile.dev` — development toolchain, dev role only
+- `mise.toml` — `setup` and `update` as mise tasks, dev machines only
 
 ## Dev machines
 
@@ -46,6 +59,10 @@ Aldine over SSH:
 - `mise activate` added to `~/.zshrc`, so SSH sessions get the pinned tools
 
 Verify with `cd ~/git/cowlabs/aldine-v2 && mise run build && mise run test`.
+
+`mise` also wraps this repo's own scripts, so both are driven the same way:
+`mise run setup`, `mise run update` and `mise run update-macos`. Only dev
+machines install `mise`; elsewhere run the scripts directly.
 
 ## GitHub access
 

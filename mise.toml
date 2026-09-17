@@ -1,0 +1,14 @@
+# Thin wrappers, so this repo is driven like aldine-v2. The scripts stay the
+# source of truth: a machine without mise runs them directly.
+
+[tasks.setup]
+description = "Converge this machine to the config in this repo"
+run = "./setup.sh"
+
+[tasks.update]
+description = "Update this repo, Homebrew packages and the Aldine toolchain"
+run = "./update.sh"
+
+[tasks.update-macos]
+description = "Update everything, macOS software updates included (reboots)"
+run = "./update.sh --macos"
