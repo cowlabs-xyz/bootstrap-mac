@@ -133,6 +133,9 @@ echo "==> Ollama"
 # A user agent, not a system daemon: Metal GPU access needs a login session, and
 # a root LaunchDaemon would fall back to CPU. Models live in ~/.ollama. Enable
 # auto-login (see manual steps) so it returns after an unattended reboot.
+# Pinned, so `brew upgrade` in update.sh and `brew bundle` above leave the
+# version alone. Upgrade by hand: brew unpin ollama && brew upgrade ollama.
+brew list --pinned | grep -qx ollama || brew pin ollama
 brew services list | grep -qE "^ollama +started" || brew services start ollama
 
 if [ "$ROLE" = "dev" ]; then

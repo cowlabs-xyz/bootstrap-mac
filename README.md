@@ -171,6 +171,19 @@ If that ever fails, turn Remote Login on by hand in System Settings → General 
 Sharing. Run the first setup at the machine itself, since SSH is not available
 until this step succeeds.
 
+## Ollama
+
+Ollama is the Homebrew formula, run by `brew services` as a user agent. It
+listens on `127.0.0.1:11434` only, which is its default.
+
+`setup.sh` pins the formula, so `update.sh` does not upgrade it. To
+upgrade by hand:
+
+```bash
+brew unpin ollama && brew upgrade ollama && brew pin ollama
+brew services restart ollama
+```
+
 ## Manual steps after setup
 
 - Set a hostname with `sudo scutil --set ComputerName/HostName/LocalHostName`
