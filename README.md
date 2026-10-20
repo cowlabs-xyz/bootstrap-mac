@@ -171,6 +171,26 @@ If that ever fails, turn Remote Login on by hand in System Settings → General 
 Sharing. Run the first setup at the machine itself, since SSH is not available
 until this step succeeds.
 
+## Ollama
+
+Ollama is the Homebrew formula, run by `brew services` as a user agent. It
+listens on `127.0.0.1:11434` only, which is its default.
+
+`setup.sh` turns off Ollama's cloud features with
+`{"disable_ollama_cloud": true}` in `~/.ollama/server.json`. This stops remote
+inference on cloud models, and the call to ollama.com for model suggestions.
+Ollama reads the file the same way as `OLLAMA_NO_CLOUD=1`. An env var does not
+work here: `brew services` rewrites its plist from the formula on every restart,
+so an env var added to the plist is lost.
+
+`setup.sh` also pins the formula, so `update.sh` does not upgrade it. To
+upgrade by hand:
+
+```bash
+brew unpin ollama && brew upgrade ollama && brew pin ollama
+brew services restart ollama
+```
+
 ## Manual steps after setup
 
 - Set a hostname with `sudo scutil --set ComputerName/HostName/LocalHostName`

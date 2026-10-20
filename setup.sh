@@ -133,7 +133,27 @@ echo "==> Ollama"
 # A user agent, not a system daemon: Metal GPU access needs a login session, and
 # a root LaunchDaemon would fall back to CPU. Models live in ~/.ollama. Enable
 # auto-login (see manual steps) so it returns after an unattended reboot.
-brew services list | grep -qE "^ollama +started" || brew services start ollama
+# Pinned, so `brew upgrade` in update.sh and `brew bundle` above leave the
+# version alone. Upgrade by hand: brew unpin ollama && brew upgrade ollama.
+brew list --pinned | grep -qx ollama || brew pin ollama
+# Turn off Ollama's cloud features: remote inference, and the call to
+# ollama.com for model suggestions. This is OLLAMA_NO_CLOUD=1, but set in a
+# file: `brew services` rewrites its plist from the formula on every restart,
+# so an env var added there is lost. Ollama reads the file only at start.
+# It listens on 127.0.0.1:11434 by default, so OLLAMA_HOST stays unset.
+OLLAMA_CONFIG="$HOME/.ollama/server.json"
+OLLAMA_CONFIG_WANT='{"disable_ollama_cloud": true}'
+OLLAMA_RESTART=false
+if [ "$(cat "$OLLAMA_CONFIG" 2>/dev/null)" != "$OLLAMA_CONFIG_WANT" ]; then
+  mkdir -p "$HOME/.ollama"
+  echo "$OLLAMA_CONFIG_WANT" > "$OLLAMA_CONFIG"
+  OLLAMA_RESTART=true
+fi
+if ! brew services list | grep -qE "^ollama +started"; then
+  brew services start ollama
+elif [ "$OLLAMA_RESTART" = true ]; then
+  brew services restart ollama
+fi
 
 if [ "$ROLE" = "dev" ]; then
   echo "==> Aldine toolchain"
