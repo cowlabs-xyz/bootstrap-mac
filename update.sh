@@ -62,9 +62,6 @@ if [ -n "$BREW" ]; then
       sudo brew services restart tailscale
     fi
   fi
-  if brew services list | grep -qE "^ollama +started"; then
-    brew services restart ollama
-  fi
   brew cleanup -s
   brew autoremove
 else

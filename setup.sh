@@ -130,17 +130,52 @@ fi
 sudo tailscale set --operator="$USER" || true
 
 echo "==> Ollama"
-# A user agent, not a system daemon: Metal GPU access needs a login session, and
-# a root LaunchDaemon would fall back to CPU. Models live in ~/.ollama. Enable
-# auto-login (see manual steps) so it returns after an unattended reboot.
-# Pinned, so `brew upgrade` in update.sh and `brew bundle` above leave the
-# version alone. Upgrade by hand: brew unpin ollama && brew upgrade ollama.
-brew list --pinned | grep -qx ollama || brew pin ollama
+# The official release build, run by our own launchd agent. Not the Homebrew
+# formula: Homebrew builds with no network, so it lacks libollama_xgrammar.dylib,
+# and models that run on MLX then refuse structured output (HTTP 501). Not the
+# Mac app either: it checks for updates every hour and sends a device ID.
+# The version is pinned. Change it here and in aldine-v2's ops/box/ollama.json
+# together; a re-run of setup.sh installs it and removes the old one.
+OLLAMA_VERSION="0.40.6"
+OLLAMA_ROOT="$HOME/.local/ollama"
+OLLAMA_DIR="$OLLAMA_ROOT/$OLLAMA_VERSION"
+OLLAMA_LABEL="xyz.cowlabs.ollama"
+OLLAMA_PLIST="$HOME/Library/LaunchAgents/$OLLAMA_LABEL.plist"
+OLLAMA_DOMAIN="gui/$(id -u)"
+
+if [ ! -x "$OLLAMA_DIR/ollama" ]; then
+  echo "    installing $OLLAMA_VERSION"
+  OLLAMA_URL="https://github.com/ollama/ollama/releases/download/v$OLLAMA_VERSION"
+  mkdir -p "$OLLAMA_ROOT"
+  OLLAMA_TMP="$(mktemp -d "$OLLAMA_ROOT/.download.XXXXXX")"
+  curl -fsSL -o "$OLLAMA_TMP/ollama-darwin.tgz" "$OLLAMA_URL/ollama-darwin.tgz"
+  curl -fsSL -o "$OLLAMA_TMP/sha256sum.txt" "$OLLAMA_URL/sha256sum.txt"
+  # The release lists each asset as ./<name>. No line, or a mismatch, fails.
+  (cd "$OLLAMA_TMP" && grep '  \./ollama-darwin\.tgz$' sha256sum.txt | shasum -a 256 -c -)
+  mkdir "$OLLAMA_TMP/ollama"
+  tar -xzf "$OLLAMA_TMP/ollama-darwin.tgz" -C "$OLLAMA_TMP/ollama"
+  if ! ls "$OLLAMA_TMP"/ollama/mlx_metal_v*/libollama_xgrammar.dylib &>/dev/null; then
+    echo "    FAILED: the $OLLAMA_VERSION tarball has no libollama_xgrammar.dylib" >&2
+    exit 1
+  fi
+  mv "$OLLAMA_TMP/ollama" "$OLLAMA_DIR"
+  rm -rf "$OLLAMA_TMP"
+fi
+# The CLI on PATH. Ollama follows the link to find its libraries.
+sudo mkdir -p /usr/local/bin
+sudo ln -sfn "$OLLAMA_DIR/ollama" /usr/local/bin/ollama
+
+# Earlier versions of this script ran the formula as a Homebrew service. Stop
+# and remove it. The models in ~/.ollama stay, so nothing downloads again.
+if brew list --formula ollama &>/dev/null; then
+  brew services stop ollama || true
+  brew unpin ollama 2>/dev/null || true
+  brew uninstall ollama
+fi
+
 # Turn off Ollama's cloud features: remote inference, and the call to
-# ollama.com for model suggestions. This is OLLAMA_NO_CLOUD=1, but set in a
-# file: `brew services` rewrites its plist from the formula on every restart,
-# so an env var added there is lost. Ollama reads the file only at start.
-# It listens on 127.0.0.1:11434 by default, so OLLAMA_HOST stays unset.
+# ollama.com for model suggestions. Ollama reads the file the same way as
+# OLLAMA_NO_CLOUD=1, and only at start.
 OLLAMA_CONFIG="$HOME/.ollama/server.json"
 OLLAMA_CONFIG_WANT='{"disable_ollama_cloud": true}'
 OLLAMA_RESTART=false
@@ -149,10 +184,77 @@ if [ "$(cat "$OLLAMA_CONFIG" 2>/dev/null)" != "$OLLAMA_CONFIG_WANT" ]; then
   echo "$OLLAMA_CONFIG_WANT" > "$OLLAMA_CONFIG"
   OLLAMA_RESTART=true
 fi
-if ! brew services list | grep -qE "^ollama +started"; then
-  brew services start ollama
+
+# A user agent, not a system daemon: Metal GPU access needs a login session, and
+# a root LaunchDaemon would fall back to CPU. Enable auto-login (see manual
+# steps) so it returns after an unattended reboot. Localhost only, and the
+# environment the Homebrew service set.
+OLLAMA_PLIST_WANT="$(cat <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Written by bootstrap-mac setup.sh. Edits are overwritten. -->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>$OLLAMA_LABEL</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>$OLLAMA_DIR/ollama</string>
+    <string>serve</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>OLLAMA_HOST</key>
+    <string>127.0.0.1:11434</string>
+    <key>OLLAMA_FLASH_ATTENTION</key>
+    <string>1</string>
+    <key>OLLAMA_KV_CACHE_TYPE</key>
+    <string>q8_0</string>
+  </dict>
+  <key>WorkingDirectory</key>
+  <string>$HOME</string>
+  <key>KeepAlive</key>
+  <true/>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>$HOME/Library/Logs/$OLLAMA_LABEL.log</string>
+  <key>StandardErrorPath</key>
+  <string>$HOME/Library/Logs/$OLLAMA_LABEL.log</string>
+</dict>
+</plist>
+EOF
+)"
+if [ "$(cat "$OLLAMA_PLIST" 2>/dev/null)" != "$OLLAMA_PLIST_WANT" ]; then
+  mkdir -p "$HOME/Library/LaunchAgents" "$HOME/Library/Logs"
+  echo "$OLLAMA_PLIST_WANT" > "$OLLAMA_PLIST"
+  # launchd reads a plist only when it loads it, so unload the old one
+  launchctl bootout "$OLLAMA_DOMAIN/$OLLAMA_LABEL" 2>/dev/null || true
+  for _ in $(seq 1 10); do
+    launchctl print "$OLLAMA_DOMAIN/$OLLAMA_LABEL" &>/dev/null || break
+    sleep 1
+  done
+fi
+if ! launchctl print "$OLLAMA_DOMAIN/$OLLAMA_LABEL" &>/dev/null; then
+  launchctl bootstrap "$OLLAMA_DOMAIN" "$OLLAMA_PLIST"
 elif [ "$OLLAMA_RESTART" = true ]; then
-  brew services restart ollama
+  launchctl kickstart -k "$OLLAMA_DOMAIN/$OLLAMA_LABEL"
+fi
+
+# GPU discovery takes a few seconds at start
+OLLAMA_RUNNING=""
+for _ in $(seq 1 60); do
+  OLLAMA_RUNNING="$(curl -fsS http://127.0.0.1:11434/api/version 2>/dev/null || true)"
+  [[ "$OLLAMA_RUNNING" == *"\"$OLLAMA_VERSION\""* ]] && break
+  sleep 1
+done
+if [[ "$OLLAMA_RUNNING" == *"\"$OLLAMA_VERSION\""* ]]; then
+  echo "    $OLLAMA_VERSION running"
+  # Remove other versions, and any download left by an interrupted run
+  find "$OLLAMA_ROOT" -mindepth 1 -maxdepth 1 ! -name "$OLLAMA_VERSION" -exec rm -rf {} +
+else
+  echo "    WARNING: Ollama $OLLAMA_VERSION does not answer on 127.0.0.1:11434"
+  echo "    (got: ${OLLAMA_RUNNING:-nothing}). See ~/Library/Logs/$OLLAMA_LABEL.log"
 fi
 
 if [ "$ROLE" = "dev" ]; then

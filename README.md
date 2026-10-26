@@ -41,7 +41,7 @@ unless you pass `--macos`, which reboots.
 - `bootstrap.sh` — curl-able entry point (Homebrew + clone + hand-off)
 - `update.sh` — routine updates: this repo, Homebrew, the toolchain, macOS
 - `setup.sh` — main setup: `brew bundle`, macOS defaults, security lockdown,
-  headless server behaviour, Remote Login (SSH), Tailscale
+  headless server behaviour, Remote Login (SSH), Tailscale, Ollama
 - `Brewfile` — packages for all machines
 - `Brewfile.dev` — development toolchain, dev role only
 - `mise.toml` — `setup` and `update` as mise tasks, dev machines only
@@ -173,23 +173,36 @@ until this step succeeds.
 
 ## Ollama
 
-Ollama is the Homebrew formula, run by `brew services` as a user agent. It
-listens on `127.0.0.1:11434` only, which is its default.
+Ollama is the official release build, `ollama-darwin.tgz` from
+[the GitHub releases](https://github.com/ollama/ollama/releases), at the
+version that `OLLAMA_VERSION` in `setup.sh` pins. `setup.sh` checks the tarball
+against the release's `sha256sum.txt`, unpacks it into
+`~/.local/ollama/<version>`, and links `/usr/local/bin/ollama` to it.
+
+It is not the Homebrew formula. Homebrew builds Ollama with no network, so the
+build lacks `libollama_xgrammar.dylib` (Ollama downloads xgrammar while it
+builds). Models that run on MLX, such as Qwen 3.5 and Gemma 4, then answer every
+request for structured output with HTTP 501
+([Homebrew/homebrew-core#302645](https://github.com/Homebrew/homebrew-core/issues/302645)).
+The release tarball ships the library. It is not the Mac app either, nor
+`install.sh`, which installs the app: the app checks for updates every hour and
+sends a device ID. `setup.sh` removes the formula from a machine that still has
+it, and keeps the models in `~/.ollama`.
+
+A launchd user agent, `xyz.cowlabs.ollama`, runs `ollama serve`. It starts at
+login and restarts after a crash. It listens on `127.0.0.1:11434` only, with
+`OLLAMA_FLASH_ATTENTION=1` and `OLLAMA_KV_CACHE_TYPE=q8_0`, as the Homebrew
+service did. It logs to `~/Library/Logs/xyz.cowlabs.ollama.log`.
 
 `setup.sh` turns off Ollama's cloud features with
 `{"disable_ollama_cloud": true}` in `~/.ollama/server.json`. This stops remote
 inference on cloud models, and the call to ollama.com for model suggestions.
-Ollama reads the file the same way as `OLLAMA_NO_CLOUD=1`. An env var does not
-work here: `brew services` rewrites its plist from the formula on every restart,
-so an env var added to the plist is lost.
+Ollama reads the file the same way as `OLLAMA_NO_CLOUD=1`.
 
-`setup.sh` also pins the formula, so `update.sh` does not upgrade it. To
-upgrade by hand:
-
-```bash
-brew unpin ollama && brew upgrade ollama && brew pin ollama
-brew services restart ollama
-```
+`update.sh` does not touch Ollama. To change the version, change
+`OLLAMA_VERSION` in `setup.sh` and the version in aldine-v2's
+`ops/box/ollama.json` together, then run `./setup.sh` on the machine. It
+installs the new version, restarts the agent, and removes the old version.
 
 ## Manual steps after setup
 
