@@ -134,7 +134,7 @@ echo "==> Ollama"
 # formula: Homebrew builds with no network, so it lacks libollama_xgrammar.dylib,
 # and models that run on MLX then refuse structured output (HTTP 501). Not the
 # Mac app either: it checks for updates every hour and sends a device ID.
-# The version is pinned. Change it here and in aldine-v2's ops/box/ollama.json
+# The version is pinned. Change it here and in aldine's ops/box/ollama.json
 # together; a re-run of setup.sh installs it and removes the old one.
 OLLAMA_VERSION="0.40.6"
 OLLAMA_ROOT="$HOME/.local/ollama"
@@ -263,11 +263,11 @@ if [ "$ROLE" = "dev" ]; then
   if ! grep -q "mise activate" "$HOME/.zshrc" 2>/dev/null; then
     echo 'eval "$(mise activate zsh)"' >> "$HOME/.zshrc"
   fi
-  ALDINE_DIR="$HOME/git/cowlabs/aldine-v2"
+  ALDINE_DIR="$HOME/git/cowlabs/aldine"
   DEPLOY_KEY="$HOME/.ssh/aldine_deploy"
   SSH_ALIAS="github.com-aldine"
 
-  # A deploy key reaches aldine-v2 and nothing else, so this machine holds no
+  # A deploy key reaches aldine and nothing else, so this machine holds no
   # account-wide GitHub credential. It lives behind a Host alias, so plain
   # github.com stays free for a forwarded agent (ssh -A) to serve.
   mkdir -p "$HOME/.ssh"
@@ -300,8 +300,8 @@ EOF
   # Wait until the public key is registered on the repo
   until deploy_key_ready; do
     echo
-    echo "    Add this deploy key to aldine-v2, with write access:"
-    echo "    https://github.com/cowlabs-xyz/aldine-v2/settings/keys/new"
+    echo "    Add this deploy key to aldine, with write access:"
+    echo "    https://github.com/cowlabs-xyz/aldine/settings/keys/new"
     echo
     cat "$DEPLOY_KEY.pub"
     echo
@@ -310,7 +310,7 @@ EOF
 
   if [ ! -d "$ALDINE_DIR/.git" ]; then
     mkdir -p "$(dirname "$ALDINE_DIR")"
-    git clone "git@$SSH_ALIAS:cowlabs-xyz/aldine-v2.git" "$ALDINE_DIR"
+    git clone "git@$SSH_ALIAS:cowlabs-xyz/aldine.git" "$ALDINE_DIR"
   fi
   # mise refuses to run an untrusted config file
   mise trust "$ALDINE_DIR/mise.toml"
@@ -327,5 +327,5 @@ echo "  - Enable auto-login (System Settings > Users & Groups), so the Ollama"
 echo "    user agent comes back after an unattended reboot"
 echo "  - Pull the Ollama model(s) this box needs: ollama pull <model>"
 if [ "$ROLE" = "dev" ]; then
-  echo "  - Verify the toolchain: cd ~/git/cowlabs/aldine-v2 && mise run build && mise run test"
+  echo "  - Verify the toolchain: cd ~/git/cowlabs/aldine && mise run build && mise run test"
 fi

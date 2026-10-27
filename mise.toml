@@ -1,4 +1,4 @@
-# Thin wrappers, so this repo is driven like aldine-v2. The scripts stay the
+# Thin wrappers, so this repo is driven like aldine. The scripts stay the
 # source of truth: a machine without mise runs them directly.
 
 [tasks.setup]

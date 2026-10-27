@@ -69,11 +69,11 @@ else
 fi
 
 echo "==> Aldine toolchain"
-ALDINE_DIR="$HOME/git/cowlabs/aldine-v2"
+ALDINE_DIR="$HOME/git/cowlabs/aldine"
 if [ "$ROLE" != "dev" ]; then
   skip "dev machines only"
 elif [ ! -d "$ALDINE_DIR/.git" ]; then
-  skip "aldine-v2 not cloned — run ./setup.sh"
+  skip "aldine not cloned — run ./setup.sh"
 else
   # Tool versions are pinned in the repo's mise.toml, so the update is a pull
   # plus a re-install: never `mise upgrade`, which would drift off the pins.
