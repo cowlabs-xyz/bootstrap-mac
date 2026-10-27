@@ -48,17 +48,17 @@ unless you pass `--macos`, which reboots.
 
 ## Dev machines
 
-The `dev` role additionally clones [aldine-v2](https://github.com/cowlabs-xyz/aldine-v2)
-to `~/git/cowlabs/aldine-v2` and provisions it, so the machine can build and run
+The `dev` role additionally clones [aldine](https://github.com/cowlabs-xyz/aldine)
+to `~/git/cowlabs/aldine` and provisions it, so the machine can build and run
 Aldine over SSH:
 
 - a deploy key for the clone (see below)
 - `mise install` — Go, Node, pnpm, buf and golangci-lint at the versions
-  `aldine-v2/mise.toml` pins. Homebrew installs none of these.
+  `aldine/mise.toml` pins. Homebrew installs none of these.
 - `mise run setup` — pnpm dependencies and the Playwright browser
 - `mise activate` added to `~/.zshrc`, so SSH sessions get the pinned tools
 
-Verify with `cd ~/git/cowlabs/aldine-v2 && mise run build && mise run test`.
+Verify with `cd ~/git/cowlabs/aldine && mise run build && mise run test`.
 
 `mise` also wraps this repo's own scripts, so both are driven the same way:
 `mise run setup`, `mise run update` and `mise run update-macos`. Only dev
@@ -73,7 +73,7 @@ installed. Run it from your laptop.
 
 Instead `setup.sh` generates a **deploy key** per machine, at
 `~/.ssh/aldine_deploy`, and prints the public half for you to add at
-[aldine-v2 → Settings → Deploy keys](https://github.com/cowlabs-xyz/aldine-v2/settings/keys/new).
+[aldine → Settings → Deploy keys](https://github.com/cowlabs-xyz/aldine/settings/keys/new).
 Allow write access so the machine can push. The key reaches that one repository
 and nothing else, and you revoke it per machine from that same page. A deploy
 key must be unique across GitHub, so each machine needs its own.
@@ -86,7 +86,7 @@ Host github.com-aldine        # the deploy key, IdentitiesOnly
 Host github.com               # untouched: a forwarded agent serves this
 ```
 
-The Aldine remote is therefore `git@github.com-aldine:cowlabs-xyz/aldine-v2.git`.
+The Aldine remote is therefore `git@github.com-aldine:cowlabs-xyz/aldine.git`.
 
 ### Agent forwarding for everything else
 
@@ -200,7 +200,7 @@ inference on cloud models, and the call to ollama.com for model suggestions.
 Ollama reads the file the same way as `OLLAMA_NO_CLOUD=1`.
 
 `update.sh` does not touch Ollama. To change the version, change
-`OLLAMA_VERSION` in `setup.sh` and the version in aldine-v2's
+`OLLAMA_VERSION` in `setup.sh` and the version in aldine's
 `ops/box/ollama.json` together, then run `./setup.sh` on the machine. It
 installs the new version, restarts the agent, and removes the old version.
 
