@@ -37,15 +37,27 @@ sudo -v
 # Keep sudo valid until the script ends, so a long step does not stop at a
 # password prompt with nobody there.
 while kill -0 "$$" 2>/dev/null; do sudo -n true; sleep 50; done 2>/dev/null &
+SUDO_KEEPALIVE=$!
+trap 'kill "$SUDO_KEEPALIVE" 2>/dev/null || true' EXIT
 
 # The box name, such as acme-1, is the box id, the macOS hostname and the
 # Tailscale machine name. It never changes, even after a wipe.
 BOX_NAME_FILE="$HOME/.mac-box-name"
 BOX_NAME=""
 WIFI_SSID=""
+WIFI_WANT=""
 WIFI_PASSWORD=""
 LOGO_DEV_KEY=""
 if [ "$ROLE" = "prod" ]; then
+  # A customer box holds the customer's data, so FileVault is on before setup.
+  # Turning it on needs a person at the machine, so the script stops here.
+  if ! fdesetup status | grep -q "FileVault is On"; then
+    echo "    FileVault is off. Turn it on first, in System Settings > Privacy &"
+    echo "    Security > FileVault, and give the recovery key to the customer."
+    echo "    Then run ./setup.sh again."
+    exit 1
+  fi
+
   BOX_NAME="${BOX_NAME:-$(cat "$BOX_NAME_FILE" 2>/dev/null || true)}"
   until [[ "$BOX_NAME" =~ ^[a-z][a-z0-9]*-[0-9]+$ ]]; do
     read -rp "    Box name, <customer>-<n> such as acme-1: " BOX_NAME
@@ -63,6 +75,7 @@ if [ "$ROLE" = "prod" ]; then
       WIFI_SSID=""
     else
       read -rp "    Office wifi name (empty to skip): " WIFI_SSID
+      WIFI_WANT="$WIFI_SSID"
       if [ -n "$WIFI_SSID" ]; then
         read -rsp "    Password of $WIFI_SSID: " WIFI_PASSWORD
         echo
@@ -76,20 +89,84 @@ if [ "$ROLE" = "prod" ]; then
   if [ -n "$LOGO_DEV_KEY" ]; then
     echo "    logo.dev key: already set"
   else
-    read -rsp "    logo.dev secret key (sk_..., empty to skip): " LOGO_DEV_KEY
-    echo
+    while :; do
+      read -rsp "    logo.dev secret key (sk_..., empty to skip): " LOGO_DEV_KEY
+      echo
+      [[ "$LOGO_DEV_KEY" =~ ^[A-Za-z0-9_]*$ ]] && break
+      echo "    A key has letters, digits and underscores only."
+    done
   fi
 fi
 
 # A tagged auth key gives the node the identity of tag:aldine-$ROLE rather
 # than of a user account, and tagged nodes never expire. The key is a secret:
-# pass it as TS_AUTHKEY, and never commit one to this public repo.
+# pass it as TS_AUTHKEY, and never commit one to this public repo. On a re-run,
+# start the daemon first, so a stopped daemon does not look like a new box.
+if command -v tailscale &>/dev/null; then
+  sudo brew services start tailscale &>/dev/null || true
+  for _ in $(seq 1 15); do
+    [ -S /var/run/tailscaled.socket ] && break
+    sleep 1
+  done
+fi
 if ! tailscale status &>/dev/null && [ -z "${TS_AUTHKEY:-}" ]; then
   echo "    Create a reusable auth key tagged 'tag:aldine-$ROLE':"
   echo "    https://login.tailscale.com/admin/settings/keys"
   read -rsp "    Auth key (tskey-auth-...): " TS_AUTHKEY
   echo
 fi
+
+# The deploy key for the aldine clone. It is the last input, as a person adds
+# it on GitHub.
+DEPLOY_KEY="$HOME/.ssh/aldine_deploy"
+SSH_ALIAS="github.com-aldine"
+
+# A deploy key reaches aldine and nothing else, so this machine holds no
+# account-wide GitHub credential. It lives behind a Host alias, so plain
+# github.com stays free for a forwarded agent (ssh -A) to serve.
+mkdir -p "$HOME/.ssh"
+chmod 700 "$HOME/.ssh"
+if [ ! -f "$DEPLOY_KEY" ]; then
+  ssh-keygen -t ed25519 -f "$DEPLOY_KEY" -N "" -C "aldine-deploy-${BOX_NAME:-$(hostname -s)}"
+fi
+if ! grep -q "^Host $SSH_ALIAS\$" "$HOME/.ssh/config" 2>/dev/null; then
+  cat >> "$HOME/.ssh/config" <<EOF
+
+Host $SSH_ALIAS
+  HostName github.com
+  User git
+  IdentityFile $DEPLOY_KEY
+  IdentitiesOnly yes
+EOF
+  chmod 600 "$HOME/.ssh/config"
+fi
+
+# ssh -T exits 1 even when it authenticates, because GitHub refuses shell
+# access. Under pipefail, `ssh | grep` would therefore always look like a
+# failure, so capture the output and match it instead.
+deploy_key_ready() {
+  local out
+  out=$(ssh -T -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 \
+    "git@$SSH_ALIAS" 2>&1 || true)
+  [[ "$out" == *"successfully authenticated"* ]]
+}
+
+# Wait until the public key is registered on the repo. A dev box pushes, so its
+# key can write. A customer box only pulls, so its key is read-only.
+until deploy_key_ready; do
+  echo
+  if [ "$ROLE" = "dev" ]; then
+    echo "    Add this deploy key to aldine, with write access:"
+  else
+    echo "    Add this deploy key to aldine, titled $BOX_NAME. Leave write access off:"
+  fi
+  echo "    https://github.com/cowlabs-xyz/aldine/settings/keys/new"
+  echo
+  cat "$DEPLOY_KEY.pub"
+  echo
+  read -rp "    Press enter once it is added: "
+done
+
 
 echo "==> Installing packages from Brewfile"
 brew bundle --file Brewfile
@@ -357,55 +434,6 @@ fi
 if ! grep -q "mise activate" "$HOME/.zshrc" 2>/dev/null; then
   echo 'eval "$(mise activate zsh)"' >> "$HOME/.zshrc"
 fi
-DEPLOY_KEY="$HOME/.ssh/aldine_deploy"
-SSH_ALIAS="github.com-aldine"
-
-# A deploy key reaches aldine and nothing else, so this machine holds no
-# account-wide GitHub credential. It lives behind a Host alias, so plain
-# github.com stays free for a forwarded agent (ssh -A) to serve.
-mkdir -p "$HOME/.ssh"
-chmod 700 "$HOME/.ssh"
-if [ ! -f "$DEPLOY_KEY" ]; then
-  ssh-keygen -t ed25519 -f "$DEPLOY_KEY" -N "" -C "aldine-deploy-${BOX_NAME:-$(hostname -s)}"
-fi
-if ! grep -q "^Host $SSH_ALIAS\$" "$HOME/.ssh/config" 2>/dev/null; then
-  cat >> "$HOME/.ssh/config" <<EOF
-
-Host $SSH_ALIAS
-  HostName github.com
-  User git
-  IdentityFile $DEPLOY_KEY
-  IdentitiesOnly yes
-EOF
-  chmod 600 "$HOME/.ssh/config"
-fi
-
-# ssh -T exits 1 even when it authenticates, because GitHub refuses shell
-# access. Under pipefail, `ssh | grep` would therefore always look like a
-# failure, so capture the output and match it instead.
-deploy_key_ready() {
-  local out
-  out=$(ssh -T -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 \
-    "git@$SSH_ALIAS" 2>&1 || true)
-  [[ "$out" == *"successfully authenticated"* ]]
-}
-
-# Wait until the public key is registered on the repo. A dev box pushes, so its
-# key can write. A customer box only pulls, so its key is read-only.
-until deploy_key_ready; do
-  echo
-  if [ "$ROLE" = "dev" ]; then
-    echo "    Add this deploy key to aldine, with write access:"
-  else
-    echo "    Add this deploy key to aldine, titled $BOX_NAME. Leave write access off:"
-  fi
-  echo "    https://github.com/cowlabs-xyz/aldine/settings/keys/new"
-  echo
-  cat "$DEPLOY_KEY.pub"
-  echo
-  read -rp "    Press enter once it is added: "
-done
-
 if [ ! -d "$ALDINE_DIR/.git" ]; then
   mkdir -p "$(dirname "$ALDINE_DIR")"
   git clone "git@$SSH_ALIAS:cowlabs-xyz/aldine.git" "$ALDINE_DIR"
@@ -458,10 +486,15 @@ if [ "$ROLE" = "prod" ]; then
   check "the deploy key reaches aldine" 'deploy_key_ready'
   check "aldine is cloned" '[ -d "$ALDINE_DIR/.git" ]'
   check "the box id is $BOX_NAME" 'grep -qxF "ALDINE_BOX_ID = \"$BOX_NAME\"" "$ALDINE_LOCAL"'
-  check "the logo.dev key is set" 'grep -q "^ALDINE_LOGO_DEV_SECRET_KEY = " "$ALDINE_LOCAL"'
+  if grep -q "^ALDINE_LOGO_DEV_SECRET_KEY = " "$ALDINE_LOCAL"; then
+    echo "    ok      the logo.dev key is set"
+  else
+    echo "    -       no logo.dev key: vendors show their initials"
+  fi
   check "Ollama $OLLAMA_VERSION answers" 'curl -fsS http://127.0.0.1:11434/api/version | grep -q "\"$OLLAMA_VERSION\""'
-  if [ -n "$(cat "$WIFI_FILE" 2>/dev/null || true)" ]; then
-    check "the office wifi is saved" 'networksetup -listpreferredwirelessnetworks "$WIFI_DEVICE" | sed "s/^[[:space:]]*//" | grep -qxF "$(cat "$WIFI_FILE")"'
+  WIFI_WANT="${WIFI_WANT:-$(cat "$WIFI_FILE" 2>/dev/null || true)}"
+  if [ -n "$WIFI_WANT" ]; then
+    check "the office wifi $WIFI_WANT is saved" 'networksetup -listpreferredwirelessnetworks "$WIFI_DEVICE" | sed "s/^[[:space:]]*//" | grep -qxF "$WIFI_WANT"'
   else
     echo "    -       no office wifi"
   fi
