@@ -8,6 +8,9 @@
 #   prod — Aldine production deployment; minimal tooling
 # Pass the role as $1 on first run, or you'll be prompted; it is
 # persisted to ~/.mac-role and reused on later runs.
+#
+# A prod box is a customer box. It asks for every input at the start, then
+# runs to the end with no other prompt, and ends with a check of what it set up.
 
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -22,6 +25,71 @@ echo "$ROLE" > "$ROLE_FILE"
 echo "==> Role: $ROLE"
 
 eval "$(/opt/homebrew/bin/brew shellenv 2>/dev/null || /usr/local/bin/brew shellenv)"
+
+ALDINE_DIR="$HOME/git/cowlabs/aldine"
+ALDINE_LOCAL="$ALDINE_DIR/mise.local.toml"
+
+# --- Inputs -------------------------------------------------------------
+# Every input comes first, so the rest runs with nobody at the keyboard. A
+# re-run asks only for what is not set up yet.
+echo "==> Inputs"
+sudo -v
+# Keep sudo valid until the script ends, so a long step does not stop at a
+# password prompt with nobody there.
+while kill -0 "$$" 2>/dev/null; do sudo -n true; sleep 50; done 2>/dev/null &
+
+# The box name, such as acme-1, is the box id, the macOS hostname and the
+# Tailscale machine name. It never changes, even after a wipe.
+BOX_NAME_FILE="$HOME/.mac-box-name"
+BOX_NAME=""
+WIFI_SSID=""
+WIFI_PASSWORD=""
+LOGO_DEV_KEY=""
+if [ "$ROLE" = "prod" ]; then
+  BOX_NAME="${BOX_NAME:-$(cat "$BOX_NAME_FILE" 2>/dev/null || true)}"
+  until [[ "$BOX_NAME" =~ ^[a-z][a-z0-9]*-[0-9]+$ ]]; do
+    read -rp "    Box name, <customer>-<n> such as acme-1: " BOX_NAME
+  done
+  echo "$BOX_NAME" > "$BOX_NAME_FILE"
+  echo "    box name: $BOX_NAME"
+
+  # The network cable comes first. The office wifi is the fallback.
+  WIFI_DEVICE="$(networksetup -listallhardwareports | awk '/^Hardware Port: Wi-Fi$/ { getline; print $2 }')"
+  WIFI_FILE="$HOME/.mac-wifi"
+  if [ -n "$WIFI_DEVICE" ]; then
+    WIFI_SSID="$(cat "$WIFI_FILE" 2>/dev/null || true)"
+    if [ -n "$WIFI_SSID" ] && networksetup -listpreferredwirelessnetworks "$WIFI_DEVICE" | sed 's/^[[:space:]]*//' | grep -qxF "$WIFI_SSID"; then
+      echo "    wifi: $WIFI_SSID, already saved"
+      WIFI_SSID=""
+    else
+      read -rp "    Office wifi name (empty to skip): " WIFI_SSID
+      if [ -n "$WIFI_SSID" ]; then
+        read -rsp "    Password of $WIFI_SSID: " WIFI_PASSWORD
+        echo
+      fi
+    fi
+  fi
+
+  # The key for vendor logos. It goes in aldine's mise.local.toml, never in this
+  # public repo.
+  LOGO_DEV_KEY="$(sed -n 's/^ALDINE_LOGO_DEV_SECRET_KEY = "\(.*\)"$/\1/p' "$ALDINE_LOCAL" 2>/dev/null || true)"
+  if [ -n "$LOGO_DEV_KEY" ]; then
+    echo "    logo.dev key: already set"
+  else
+    read -rsp "    logo.dev secret key (sk_..., empty to skip): " LOGO_DEV_KEY
+    echo
+  fi
+fi
+
+# A tagged auth key gives the node the identity of tag:aldine-$ROLE rather
+# than of a user account, and tagged nodes never expire. The key is a secret:
+# pass it as TS_AUTHKEY, and never commit one to this public repo.
+if ! tailscale status &>/dev/null && [ -z "${TS_AUTHKEY:-}" ]; then
+  echo "    Create a reusable auth key tagged 'tag:aldine-$ROLE':"
+  echo "    https://login.tailscale.com/admin/settings/keys"
+  read -rsp "    Auth key (tskey-auth-...): " TS_AUTHKEY
+  echo
+fi
 
 echo "==> Installing packages from Brewfile"
 brew bundle --file Brewfile
@@ -51,14 +119,17 @@ sudo defaults write /Library/Preferences/com.apple.loginwindow RetriesUntilHint 
 # Updates: always check + download + security responses on all machines
 sudo defaults write /Library/Preferences/com.apple.SoftwareUpdate AutomaticCheckEnabled -bool true
 sudo defaults write /Library/Preferences/com.apple.SoftwareUpdate AutomaticDownload -bool true
-sudo defaults write /Library/Preferences/com.apple.SoftwareUpdate CriticalUpdateInstall -bool true
 sudo defaults write /Library/Preferences/com.apple.commerce AutoUpdate -bool true
 # macOS updates auto-install only on dev (tolerable reboots); prod applies
-# them manually in a maintenance window — never surprise-reboot production
+# them by hand outside office hours. A prod box has FileVault on, so a restart
+# nobody expects leaves it down until someone types the password. Security
+# responses can restart the machine too, so prod installs none by itself.
 if [ "$ROLE" = "dev" ]; then
   sudo defaults write /Library/Preferences/com.apple.SoftwareUpdate AutomaticallyInstallMacOSUpdates -bool true
+  sudo defaults write /Library/Preferences/com.apple.SoftwareUpdate CriticalUpdateInstall -bool true
 else
   sudo defaults write /Library/Preferences/com.apple.SoftwareUpdate AutomaticallyInstallMacOSUpdates -bool false
+  sudo defaults write /Library/Preferences/com.apple.SoftwareUpdate CriticalUpdateInstall -bool false
 fi
 # Gatekeeper: warn if someone disabled it
 if ! spctl --status 2>/dev/null | grep -q "enabled"; then
@@ -74,11 +145,34 @@ echo "==> Server behaviour (headless)"
 # Never sleep; restart automatically after power failure or freeze
 sudo pmset -a sleep 0 disksleep 0 displaysleep 10 autorestart 1 womp 1
 sudo systemsetup -setrestartfreeze on
-# FileVault must be OFF for unattended reboots (boot blocks on password);
-# rely on physical security of the machines instead
-if fdesetup status | grep -q "FileVault is On"; then
+# A dev box keeps FileVault OFF for unattended reboots (boot blocks on
+# password), and relies on the physical security of our office. A prod box
+# holds a customer's data, so it has FileVault ON, and the final check says so.
+if [ "$ROLE" = "dev" ] && fdesetup status | grep -q "FileVault is On"; then
   echo "    WARNING: FileVault is ON — this machine cannot reboot unattended"
   echo "    (use 'sudo fdesetup authrestart' for manual reboots, or disable FileVault)"
+fi
+
+if [ "$ROLE" = "prod" ]; then
+  echo "==> Name: $BOX_NAME"
+  for name in ComputerName HostName LocalHostName; do
+    if [ "$(scutil --get "$name" 2>/dev/null || true)" != "$BOX_NAME" ]; then
+      sudo scutil --set "$name" "$BOX_NAME"
+    fi
+  done
+
+  if [ -n "$WIFI_SSID" ]; then
+    echo "==> Wifi: $WIFI_SSID"
+    # networksetup prints an error but exits 0 when it cannot join, so the
+    # list of saved networks decides.
+    sudo networksetup -setairportnetwork "$WIFI_DEVICE" "$WIFI_SSID" "$WIFI_PASSWORD" || true
+    if networksetup -listpreferredwirelessnetworks "$WIFI_DEVICE" | sed 's/^[[:space:]]*//' | grep -qxF "$WIFI_SSID"; then
+      echo "$WIFI_SSID" > "$WIFI_FILE"
+      echo "    saved"
+    else
+      echo "    FAILED to join $WIFI_SSID. Check the name and the password, and run ./setup.sh again"
+    fi
+  fi
 fi
 
 echo "==> Enabling Remote Login (SSH)"
@@ -110,21 +204,17 @@ for _ in $(seq 1 15); do
   sleep 1
 done
 
+TS_HOSTNAME="${BOX_NAME:-$(hostname -s)}"
 if tailscale status &>/dev/null; then
   echo "    already connected"
-else
-  # A tagged auth key gives the node the identity of tag:aldine-$ROLE rather
-  # than of a user account, and tagged nodes never expire. The key is a secret:
-  # pass it as TS_AUTHKEY, and never commit one to this public repo.
-  if [ -z "${TS_AUTHKEY:-}" ]; then
-    echo "    Create a reusable auth key tagged 'tag:aldine-$ROLE':"
-    echo "    https://login.tailscale.com/admin/settings/keys"
-    read -rsp "    Auth key (tskey-auth-...): " TS_AUTHKEY
-    echo
+  # A dev box keeps the Tailscale name it has.
+  if [ "$ROLE" = "prod" ]; then
+    sudo tailscale set --hostname="$TS_HOSTNAME"
   fi
+else
   # --ssh serves SSH over the tailnet, authorised by the policy file instead of
   # authorized_keys. Native Remote Login stays on above as a fallback.
-  sudo tailscale up --ssh --auth-key="$TS_AUTHKEY" --hostname="$(hostname -s)"
+  sudo tailscale up --ssh --auth-key="$TS_AUTHKEY" --hostname="$TS_HOSTNAME"
 fi
 # Let this user run tailscale without sudo
 sudo tailscale set --operator="$USER" || true
@@ -257,26 +347,29 @@ else
   echo "    (got: ${OLLAMA_RUNNING:-nothing}). See ~/Library/Logs/$OLLAMA_LABEL.log"
 fi
 
-if [ "$ROLE" = "dev" ]; then
-  echo "==> Aldine toolchain"
-  # Activate mise in the login shell, so SSH sessions get the pinned tools
-  if ! grep -q "mise activate" "$HOME/.zshrc" 2>/dev/null; then
-    echo 'eval "$(mise activate zsh)"' >> "$HOME/.zshrc"
-  fi
-  ALDINE_DIR="$HOME/git/cowlabs/aldine"
-  DEPLOY_KEY="$HOME/.ssh/aldine_deploy"
-  SSH_ALIAS="github.com-aldine"
+echo "==> Aldine"
+# Both roles run Aldine from a clone: ops/box/deploy.sh in aldine installs and
+# restarts it. Activate mise in the shells, so SSH sessions and the login shell
+# of the launchd agent get the pinned tools.
+if ! grep -q "brew shellenv" "$HOME/.zprofile" 2>/dev/null; then
+  echo 'eval "$(/opt/homebrew/bin/brew shellenv)"' >> "$HOME/.zprofile"
+fi
+if ! grep -q "mise activate" "$HOME/.zshrc" 2>/dev/null; then
+  echo 'eval "$(mise activate zsh)"' >> "$HOME/.zshrc"
+fi
+DEPLOY_KEY="$HOME/.ssh/aldine_deploy"
+SSH_ALIAS="github.com-aldine"
 
-  # A deploy key reaches aldine and nothing else, so this machine holds no
-  # account-wide GitHub credential. It lives behind a Host alias, so plain
-  # github.com stays free for a forwarded agent (ssh -A) to serve.
-  mkdir -p "$HOME/.ssh"
-  chmod 700 "$HOME/.ssh"
-  if [ ! -f "$DEPLOY_KEY" ]; then
-    ssh-keygen -t ed25519 -f "$DEPLOY_KEY" -N "" -C "aldine-deploy-$(hostname -s)"
-  fi
-  if ! grep -q "^Host $SSH_ALIAS\$" "$HOME/.ssh/config" 2>/dev/null; then
-    cat >> "$HOME/.ssh/config" <<EOF
+# A deploy key reaches aldine and nothing else, so this machine holds no
+# account-wide GitHub credential. It lives behind a Host alias, so plain
+# github.com stays free for a forwarded agent (ssh -A) to serve.
+mkdir -p "$HOME/.ssh"
+chmod 700 "$HOME/.ssh"
+if [ ! -f "$DEPLOY_KEY" ]; then
+  ssh-keygen -t ed25519 -f "$DEPLOY_KEY" -N "" -C "aldine-deploy-${BOX_NAME:-$(hostname -s)}"
+fi
+if ! grep -q "^Host $SSH_ALIAS\$" "$HOME/.ssh/config" 2>/dev/null; then
+  cat >> "$HOME/.ssh/config" <<EOF
 
 Host $SSH_ALIAS
   HostName github.com
@@ -284,48 +377,106 @@ Host $SSH_ALIAS
   IdentityFile $DEPLOY_KEY
   IdentitiesOnly yes
 EOF
-    chmod 600 "$HOME/.ssh/config"
-  fi
-
-  # ssh -T exits 1 even when it authenticates, because GitHub refuses shell
-  # access. Under pipefail, `ssh | grep` would therefore always look like a
-  # failure, so capture the output and match it instead.
-  deploy_key_ready() {
-    local out
-    out=$(ssh -T -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 \
-      "git@$SSH_ALIAS" 2>&1 || true)
-    [[ "$out" == *"successfully authenticated"* ]]
-  }
-
-  # Wait until the public key is registered on the repo
-  until deploy_key_ready; do
-    echo
-    echo "    Add this deploy key to aldine, with write access:"
-    echo "    https://github.com/cowlabs-xyz/aldine/settings/keys/new"
-    echo
-    cat "$DEPLOY_KEY.pub"
-    echo
-    read -rp "    Press enter once it is added: "
-  done
-
-  if [ ! -d "$ALDINE_DIR/.git" ]; then
-    mkdir -p "$(dirname "$ALDINE_DIR")"
-    git clone "git@$SSH_ALIAS:cowlabs-xyz/aldine.git" "$ALDINE_DIR"
-  fi
-  # mise refuses to run an untrusted config file
-  mise trust "$ALDINE_DIR/mise.toml"
-  # Go, Node, pnpm, buf and golangci-lint at the versions the repo pins,
-  # then pnpm deps and the Playwright browser
-  (cd "$ALDINE_DIR" && mise install && mise run setup)
+  chmod 600 "$HOME/.ssh/config"
 fi
 
-echo
-echo "Done. Remaining manual steps:"
-echo "  - Set a hostname: sudo scutil --set ComputerName/HostName/LocalHostName"
-echo "  - Enable Screen Sharing (System Settings > General > Sharing) if wanted"
-echo "  - Enable auto-login (System Settings > Users & Groups), so the Ollama"
-echo "    user agent comes back after an unattended reboot"
-echo "  - Pull the Ollama model(s) this box needs: ollama pull <model>"
+# ssh -T exits 1 even when it authenticates, because GitHub refuses shell
+# access. Under pipefail, `ssh | grep` would therefore always look like a
+# failure, so capture the output and match it instead.
+deploy_key_ready() {
+  local out
+  out=$(ssh -T -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 \
+    "git@$SSH_ALIAS" 2>&1 || true)
+  [[ "$out" == *"successfully authenticated"* ]]
+}
+
+# Wait until the public key is registered on the repo. A dev box pushes, so its
+# key can write. A customer box only pulls, so its key is read-only.
+until deploy_key_ready; do
+  echo
+  if [ "$ROLE" = "dev" ]; then
+    echo "    Add this deploy key to aldine, with write access:"
+  else
+    echo "    Add this deploy key to aldine, titled $BOX_NAME. Leave write access off:"
+  fi
+  echo "    https://github.com/cowlabs-xyz/aldine/settings/keys/new"
+  echo
+  cat "$DEPLOY_KEY.pub"
+  echo
+  read -rp "    Press enter once it is added: "
+done
+
+if [ ! -d "$ALDINE_DIR/.git" ]; then
+  mkdir -p "$(dirname "$ALDINE_DIR")"
+  git clone "git@$SSH_ALIAS:cowlabs-xyz/aldine.git" "$ALDINE_DIR"
+fi
+
+# A customer box carries its own id, which also turns off the debug service.
+# This file belongs to setup.sh on a prod box: a re-run writes it again.
+if [ "$ROLE" = "prod" ]; then
+  ALDINE_LOCAL_WANT="$(cat <<EOF
+# Written by bootstrap-mac setup.sh. Edits are overwritten.
+[env]
+ALDINE_BOX_ID = "$BOX_NAME"
+EOF
+)"
+  if [ -n "$LOGO_DEV_KEY" ]; then
+    ALDINE_LOCAL_WANT="$ALDINE_LOCAL_WANT
+ALDINE_LOGO_DEV_SECRET_KEY = \"$LOGO_DEV_KEY\""
+  fi
+  ( umask 077 && echo "$ALDINE_LOCAL_WANT" > "$ALDINE_LOCAL" )
+  mise trust "$ALDINE_LOCAL"
+fi
+
+# mise refuses to run an untrusted config file
+mise trust "$ALDINE_DIR/mise.toml"
+# Go, Node, pnpm, buf and golangci-lint at the versions the repo pins. A dev
+# box also gets the pnpm deps and the Playwright browser. A deploy installs
+# what a prod box needs.
 if [ "$ROLE" = "dev" ]; then
+  (cd "$ALDINE_DIR" && mise install && mise run setup)
+else
+  (cd "$ALDINE_DIR" && mise install)
+fi
+
+if [ "$ROLE" = "prod" ]; then
+  echo
+  echo "==> Check"
+  FAILED=0
+  check() {
+    if eval "$2" &>/dev/null; then
+      echo "    ok      $1"
+    else
+      echo "    FAILED  $1"
+      FAILED=$((FAILED + 1))
+    fi
+  }
+  check "hostname is $BOX_NAME" '[ "$(scutil --get HostName)" = "$BOX_NAME" ]'
+  check "Tailscale machine name is $BOX_NAME" 'tailscale status --json --peers=false | grep -q "\"DNSName\": \"$BOX_NAME\."'
+  check "FileVault is on" 'fdesetup status | grep -q "FileVault is On"'
+  check "macOS updates do not install by themselves" '[ "$(defaults read /Library/Preferences/com.apple.SoftwareUpdate AutomaticallyInstallMacOSUpdates)" = 0 ] && [ "$(defaults read /Library/Preferences/com.apple.SoftwareUpdate CriticalUpdateInstall)" = 0 ]'
+  check "the deploy key reaches aldine" 'deploy_key_ready'
+  check "aldine is cloned" '[ -d "$ALDINE_DIR/.git" ]'
+  check "the box id is $BOX_NAME" 'grep -qxF "ALDINE_BOX_ID = \"$BOX_NAME\"" "$ALDINE_LOCAL"'
+  check "the logo.dev key is set" 'grep -q "^ALDINE_LOGO_DEV_SECRET_KEY = " "$ALDINE_LOCAL"'
+  check "Ollama $OLLAMA_VERSION answers" 'curl -fsS http://127.0.0.1:11434/api/version | grep -q "\"$OLLAMA_VERSION\""'
+  if [ -n "$(cat "$WIFI_FILE" 2>/dev/null || true)" ]; then
+    check "the office wifi is saved" 'networksetup -listpreferredwirelessnetworks "$WIFI_DEVICE" | sed "s/^[[:space:]]*//" | grep -qxF "$(cat "$WIFI_FILE")"'
+  else
+    echo "    -       no office wifi"
+  fi
+  echo
+  if [ "$FAILED" -gt 0 ]; then
+    echo "$FAILED check(s) failed. Fix them, and run ./setup.sh again."
+    exit 1
+  fi
+  echo "Done. $BOX_NAME is set up. Deploy Aldine to it from your laptop."
+else
+  echo
+  echo "Done. Remaining manual steps:"
+  echo "  - Set a hostname: sudo scutil --set ComputerName/HostName/LocalHostName"
+  echo "  - Enable Screen Sharing (System Settings > General > Sharing) if wanted"
+  echo "  - Enable auto-login (System Settings > Users & Groups), so the Ollama"
+  echo "    user agent comes back after an unattended reboot"
   echo "  - Verify the toolchain: cd ~/git/cowlabs/aldine && mise run build && mise run test"
 fi
