@@ -78,6 +78,7 @@ at the start, then runs to the end with no other prompt:
 - the logo.dev secret key, for vendor logos. Leave it empty to skip.
 - the Tailscale auth key, tagged `tag:aldine-prod`, if the box is not on the
   tailnet yet.
+- the deploy key: `setup.sh` prints it, and waits until you add it to aldine.
 
 A re-run asks only for what is not set up yet.
 
@@ -97,7 +98,8 @@ It ends with a check of each of these, and of FileVault and Ollama. A failed
 check exits with an error: fix it, and run `./setup.sh` again.
 
 Before `setup.sh`, at the machine: create the `aldine` admin account, and turn
-on FileVault. Neither can be done from a script.
+on FileVault. Neither can be done from a script. `setup.sh` stops at the start
+if FileVault is off.
 
 ## GitHub access
 
