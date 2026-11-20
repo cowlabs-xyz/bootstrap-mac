@@ -418,7 +418,7 @@ PREFS
 fi
 
 if [ "$ROLE" = "prod" ]; then
-  echo "==> Dock, desktop picture and user picture"
+  echo "==> Dock"
   # The Dock holds Chrome and System Settings, after Finder, which is always
   # first. A re-run sets it again.
   dock_tile() {
@@ -430,23 +430,25 @@ if [ "$ROLE" = "prod" ]; then
   defaults write com.apple.dock persistent-others -array
   defaults write com.apple.dock show-recents -bool false
   killall Dock &>/dev/null || true
+fi
 
-  # The images live in this repo, in assets/. Copy them to where macOS keeps
-  # its own, so a pull of this repo does not change them under the box.
-  WALLPAPER="/Library/Desktop Pictures/Aldine.png"
-  USER_PICTURE="/Library/User Pictures/Aldine.png"
-  sudo cp assets/wallpaper.png "$WALLPAPER"
-  sudo mkdir -p "/Library/User Pictures"
-  sudo cp assets/user-picture.png "$USER_PICTURE"
-  # macOS shows JPEGPhoto before Picture, so delete it.
-  sudo dscl . -delete "/Users/$USER" JPEGPhoto &>/dev/null || true
-  sudo dscl . -create "/Users/$USER" Picture "$USER_PICTURE"
-  # Setting the desktop picture needs a logged-in session, and macOS can ask
-  # once to let this terminal control System Events.
-  if ! osascript -e "tell application \"System Events\" to tell every desktop to set picture to POSIX file \"$WALLPAPER\"" &>/dev/null; then
-    echo "    Could not set the desktop picture. Log in at the box and run ./setup.sh"
-    echo "    there, or pick $WALLPAPER in System Settings > Wallpaper."
-  fi
+# Every box shows the Aldine mark as its desktop picture and user picture.
+echo "==> Desktop picture and user picture"
+# The images live in this repo, in assets/. Copy them to where macOS keeps
+# its own, so a pull of this repo does not change them under the box.
+WALLPAPER="/Library/Desktop Pictures/Aldine.png"
+USER_PICTURE="/Library/User Pictures/Aldine.png"
+sudo cp assets/wallpaper.png "$WALLPAPER"
+sudo mkdir -p "/Library/User Pictures"
+sudo cp assets/user-picture.png "$USER_PICTURE"
+# macOS shows JPEGPhoto before Picture, so delete it.
+sudo dscl . -delete "/Users/$USER" JPEGPhoto &>/dev/null || true
+sudo dscl . -create "/Users/$USER" Picture "$USER_PICTURE"
+# Setting the desktop picture needs a logged-in session, and macOS can ask
+# once to let this terminal control System Events.
+if ! osascript -e "tell application \"System Events\" to tell every desktop to set picture to POSIX file \"$WALLPAPER\"" &>/dev/null; then
+  echo "    Could not set the desktop picture. Log in at the box and run ./setup.sh"
+  echo "    there, or pick $WALLPAPER in System Settings > Wallpaper."
 fi
 
 if [ "$ROLE" = "prod" ]; then
