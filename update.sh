@@ -52,16 +52,6 @@ if [ -n "$BREW" ]; then
   eval "$("$BREW" shellenv)"
   brew update
   brew upgrade
-  # Restart the daemons whose binaries may have just been replaced. Never
-  # tailscaled while we are connected through it: it would cut this session
-  # mid-run. The new binary takes over at the next reboot instead.
-  if sudo brew services list 2>/dev/null | grep -qE "^tailscale +started"; then
-    if over_tailnet; then
-      skip "tailscaled restart — you are connected through it"
-    else
-      sudo brew services restart tailscale
-    fi
-  fi
   brew cleanup -s
   brew autoremove
 else
@@ -79,6 +69,22 @@ else
   # plus a re-install: never `mise upgrade`, which would drift off the pins.
   (cd "$ALDINE_DIR" && git pull --ff-only && mise install && mise run setup)
 fi
+
+# Restart tailscaled last, so its new binary runs. launchd itself does the
+# restart, so a session over the tailnet that drops during it cannot cut it
+# halfway, as `brew services restart` can. The session drops for a few seconds:
+# reconnect. A macOS update restarts the machine anyway, so it skips this.
+restart_tailscaled() {
+  if [ "$MACOS" = true ] || ! sudo launchctl print system/sh.brew.tailscale &>/dev/null; then
+    return
+  fi
+  echo "==> Restarting tailscaled"
+  if over_tailnet; then
+    echo "    This session drops now. Reconnect in a few seconds."
+    trap "" HUP
+  fi
+  sudo launchctl kickstart -k system/sh.brew.tailscale
+}
 
 echo "==> macOS software updates"
 if [ "$MACOS" = true ]; then
@@ -111,3 +117,4 @@ else
   echo "Done, with ${#SKIPPED[@]} step(s) skipped:"
   printf '  - %s\n' "${SKIPPED[@]}"
 fi
+restart_tailscaled
