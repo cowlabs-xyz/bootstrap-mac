@@ -1,0 +1,5 @@
+# Customer boxes only
+#
+# Staff open Aldine on the box in Chrome. setup.sh makes Aldine its start page
+# and a bookmark, and blocks sign-in to a Google profile.
+cask "google-chrome"

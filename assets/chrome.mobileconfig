@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Chrome policies for a customer box. Chrome on macOS applies a policy only from a
+     configuration profile, not from `defaults write`. setup.sh opens this file, and a
+     person installs it in System Settings. -->
+<plist version="1.0">
+<dict>
+  <key>PayloadDisplayName</key>
+  <string>Aldine: Chrome</string>
+  <key>PayloadDescription</key>
+  <string>No Google profile in Chrome, and no data to Google beyond updates.</string>
+  <key>PayloadIdentifier</key>
+  <string>ai.aldine.chrome</string>
+  <key>PayloadOrganization</key>
+  <string>Aldine</string>
+  <key>PayloadScope</key>
+  <string>System</string>
+  <key>PayloadType</key>
+  <string>Configuration</string>
+  <key>PayloadUUID</key>
+  <string>4E7C2B1A-9D3F-4A6E-8B25-1C0F7D9E3A41</string>
+  <key>PayloadVersion</key>
+  <integer>1</integer>
+  <key>PayloadContent</key>
+  <array>
+    <dict>
+      <key>PayloadType</key>
+      <string>com.google.Chrome</string>
+      <key>PayloadIdentifier</key>
+      <string>ai.aldine.chrome.policies</string>
+      <key>PayloadUUID</key>
+      <string>B3A91F6C-5E2D-4C8B-9F17-6D4E2A0C8B95</string>
+      <key>PayloadVersion</key>
+      <integer>1</integer>
+      <key>PayloadDisplayName</key>
+      <string>Chrome policies</string>
+      <!-- No Google profile: no sign-in, no sync, no new profiles, no guest mode. -->
+      <key>BrowserSignin</key>
+      <integer>0</integer>
+      <key>SyncDisabled</key>
+      <true/>
+      <key>BrowserAddPersonEnabled</key>
+      <false/>
+      <key>BrowserGuestModeEnabled</key>
+      <false/>
+      <!-- What a person types in the address bar stays on the box. -->
+      <key>SearchSuggestEnabled</key>
+      <false/>
+      <!-- No usage statistics, crash reports or URL data to Google. -->
+      <key>MetricsReportingEnabled</key>
+      <false/>
+      <key>UrlKeyedAnonymizedDataCollectionEnabled</key>
+      <false/>
+    </dict>
+  </array>
+</dict>
+</plist>

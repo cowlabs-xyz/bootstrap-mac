@@ -52,6 +52,18 @@ if [ -n "$BREW" ]; then
   eval "$("$BREW" shellenv)"
   brew update
   brew upgrade
+  # `sudo brew services` makes tailscaled root-owned, so `brew cleanup` cannot
+  # remove an old tailscale keg, and fails. Remove the old kegs with sudo first.
+  # The running tailscaled keeps its open binary until the restart below.
+  TS_CURRENT="$(readlink "$(brew --prefix)/opt/tailscale" 2>/dev/null || true)"
+  if [ -n "$TS_CURRENT" ]; then
+    for keg in "$(brew --prefix)"/Cellar/tailscale/*; do
+      if [ -d "$keg" ] && [ "$(basename "$keg")" != "$(basename "$TS_CURRENT")" ]; then
+        echo "    removing the old tailscale keg $(basename "$keg")"
+        sudo rm -rf "$keg"
+      fi
+    done
+  fi
   brew cleanup -s
   brew autoremove
 else
@@ -67,7 +79,14 @@ elif [ ! -d "$ALDINE_DIR/.git" ]; then
 else
   # Tool versions are pinned in the repo's mise.toml, so the update is a pull
   # plus a re-install: never `mise upgrade`, which would drift off the pins.
-  (cd "$ALDINE_DIR" && git pull --ff-only && mise install && mise run setup)
+  # A deploy leaves the clone on a detached commit. Then the deploy moves the
+  # clone, so install the pins of that commit and do not pull.
+  if git -C "$ALDINE_DIR" symbolic-ref -q HEAD >/dev/null; then
+    git -C "$ALDINE_DIR" pull --ff-only
+  else
+    echo "    aldine is on a deployed commit: not pulling"
+  fi
+  (cd "$ALDINE_DIR" && mise install && mise run setup)
 fi
 
 # Restart tailscaled last, so its new binary runs. launchd itself does the

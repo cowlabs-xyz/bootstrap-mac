@@ -272,6 +272,7 @@ echo "==> Installing packages from Brewfile"
 # upgrades nothing.
 if [ "$ROLE" = "prod" ]; then
   HOMEBREW_BUNDLE_NO_UPGRADE=1 brew bundle --file Brewfile
+  HOMEBREW_BUNDLE_NO_UPGRADE=1 brew bundle --file Brewfile.prod
 else
   brew bundle --file Brewfile
 fi
@@ -322,6 +323,143 @@ fi
 # PasswordAuthentication no
 # KbdInteractiveAuthentication no
 # SSH
+
+echo "==> macOS services and apps"
+# A box serves Aldine only. Turn off the services that send data to Apple or
+# talk to devices nearby. Some apply only after the next login.
+# Siri, and Siri data sharing
+defaults write com.apple.assistant.support "Assistant Enabled" -bool false
+defaults write com.apple.assistant.support "Siri Data Sharing Opt-In Status" -int 2
+defaults write com.apple.Siri StatusMenuVisible -bool false
+defaults write com.apple.Siri VoiceTriggerUserEnabled -bool false
+# Analytics and crash reports to Apple and to app developers
+DIAG_PLIST="/Library/Application Support/CrashReporter/DiagnosticMessagesHistory.plist"
+sudo defaults write "$DIAG_PLIST" AutoSubmit -bool false
+sudo defaults write "$DIAG_PLIST" ThirdPartyDataSubmit -bool false
+# AirDrop and Handoff
+defaults write com.apple.NetworkBrowser DisableAirDrop -bool true
+defaults -currentHost write com.apple.coreservices.useractivityd ActivityAdvertisingAllowed -bool false
+defaults -currentHost write com.apple.coreservices.useractivityd ActivityReceivingAllowed -bool false
+# The App Store apps that come with a Mac. The apps on the system volume
+# (Music, News, Safari and so on) are read-only and stay.
+REMOVED_APPS=(GarageBand iMovie Keynote Numbers Pages)
+for app in "${REMOVED_APPS[@]}"; do
+  if [ -d "/Applications/$app.app" ]; then
+    echo "    removing $app"
+    sudo rm -rf "/Applications/$app.app"
+  fi
+done
+if defaults read MobileMeAccounts Accounts 2>/dev/null | grep -q AccountID; then
+  echo "    WARNING: this Mac is signed in to an Apple ID. Sign out in System Settings."
+fi
+
+if [ "$ROLE" = "prod" ]; then
+  echo "==> Chrome"
+  # Staff open Aldine on the box in Chrome, not Safari. Aldine is the start
+  # page, the home page and a bookmark. Chrome reads the initial preferences
+  # when it makes a new profile only, so a profile made before this step keeps
+  # its own settings.
+  ALDINE_URL="http://localhost:5173"
+  CHROME_SUPPORT="/Library/Google"
+  CHROME_INITIAL="$CHROME_SUPPORT/Google Chrome Initial Preferences"
+  CHROME_BOOKMARKS="$CHROME_SUPPORT/aldine-bookmarks.html"
+  sudo mkdir -p "$CHROME_SUPPORT"
+  sudo tee "$CHROME_BOOKMARKS" >/dev/null <<BOOKMARKS
+<!DOCTYPE NETSCAPE-Bookmark-file-1>
+<META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=UTF-8">
+<TITLE>Bookmarks</TITLE>
+<H1>Bookmarks</H1>
+<DL><p>
+    <DT><H3 PERSONAL_TOOLBAR_FOLDER="true">Bookmarks bar</H3>
+    <DL><p>
+        <DT><A HREF="$ALDINE_URL/">Aldine</A>
+    </DL><p>
+</DL><p>
+BOOKMARKS
+  sudo tee "$CHROME_INITIAL" >/dev/null <<PREFS
+{
+  "homepage": "$ALDINE_URL/",
+  "homepage_is_newtabpage": false,
+  "browser": { "show_home_button": true },
+  "session": { "restore_on_startup": 4, "startup_urls": ["$ALDINE_URL/"] },
+  "bookmark_bar": { "show_on_all_tabs": true },
+  "sync_promo": { "show_on_first_run_allowed": false },
+  "first_run_tabs": ["$ALDINE_URL/"],
+  "distribution": {
+    "skip_first_run_ui": true,
+    "import_bookmarks": false,
+    "import_bookmarks_from_file": "$CHROME_BOOKMARKS",
+    "make_chrome_default_for_user": true,
+    "suppress_first_run_default_browser_prompt": false
+  }
+}
+PREFS
+  # Chrome applies a policy only from a configuration profile, and macOS lets
+  # a person install a profile, not a script. So open it for them.
+  CHROME_PROFILE_ID="ai.aldine.chrome"
+  chrome_profile_installed() {
+    sudo profiles show -type configuration 2>/dev/null | grep -q "$CHROME_PROFILE_ID"
+  }
+  if ! chrome_profile_installed; then
+    open assets/chrome.mobileconfig || true
+    echo "    Install the Chrome profile: System Settings > General > Device Management,"
+    echo "    open \"Aldine: Chrome\", and click Install. Then run ./setup.sh again."
+  fi
+  # macOS asks a person to confirm a new default browser. Chrome asks on its
+  # first run, so open it.
+  chrome_is_default() {
+    defaults read com.apple.LaunchServices/com.apple.launchservices.secure LSHandlers 2>/dev/null | grep -B1 "LSHandlerURLScheme = https;" | grep -q "com.google.chrome"
+  }
+  if ! chrome_is_default; then
+    open -a "Google Chrome" || true
+    echo "    Make Chrome the default browser: confirm the macOS prompt, or pick it in"
+    echo "    System Settings > Desktop & Dock > Default web browser."
+  fi
+fi
+
+if [ "$ROLE" = "prod" ]; then
+  echo "==> Dock, desktop picture and user picture"
+  # The Dock holds Chrome and System Settings, after Finder, which is always
+  # first. A re-run sets it again.
+  dock_tile() {
+    echo "<dict><key>tile-data</key><dict><key>file-data</key><dict><key>_CFURLString</key><string>$1</string><key>_CFURLStringType</key><integer>0</integer></dict></dict></dict>"
+  }
+  defaults write com.apple.dock persistent-apps -array \
+    "$(dock_tile "/Applications/Google Chrome.app")" \
+    "$(dock_tile "/System/Applications/System Settings.app")"
+  defaults write com.apple.dock persistent-others -array
+  defaults write com.apple.dock show-recents -bool false
+  killall Dock &>/dev/null || true
+
+  # The images live in this repo, in assets/. Copy them to where macOS keeps
+  # its own, so a pull of this repo does not change them under the box.
+  WALLPAPER="/Library/Desktop Pictures/Aldine.png"
+  USER_PICTURE="/Library/User Pictures/Aldine.png"
+  sudo cp assets/wallpaper.png "$WALLPAPER"
+  sudo mkdir -p "/Library/User Pictures"
+  sudo cp assets/user-picture.png "$USER_PICTURE"
+  # macOS shows JPEGPhoto before Picture, so delete it.
+  sudo dscl . -delete "/Users/$USER" JPEGPhoto &>/dev/null || true
+  sudo dscl . -create "/Users/$USER" Picture "$USER_PICTURE"
+  # Setting the desktop picture needs a logged-in session, and macOS can ask
+  # once to let this terminal control System Events.
+  if ! osascript -e "tell application \"System Events\" to tell every desktop to set picture to POSIX file \"$WALLPAPER\"" &>/dev/null; then
+    echo "    Could not set the desktop picture. Log in at the box and run ./setup.sh"
+    echo "    there, or pick $WALLPAPER in System Settings > Wallpaper."
+  fi
+fi
+
+if [ "$ROLE" = "prod" ]; then
+  echo "==> Screen lock"
+  # A person uses Aldine at the box, and the display sleeps after 10 minutes.
+  # Ask for the password 5 seconds after that, so nobody walking past reads
+  # the invoices. sysadminctl asks for the password of this user.
+  SCREEN_LOCK_STATUS="screenLock delay is 5 seconds"
+  if ! sysadminctl -screenLock status 2>&1 | grep -q "$SCREEN_LOCK_STATUS"; then
+    echo "    Type the macOS password of $USER to turn on the screen lock."
+    sysadminctl -screenLock 5 -password - || echo "    WARNING: the screen lock is not set"
+  fi
+fi
 
 echo "==> Server behaviour (headless)"
 # Never sleep; restart automatically after power failure or freeze
@@ -732,6 +870,18 @@ if [ "$ROLE" = "prod" ]; then
   check "Tailscale machine name is $BOX_NAME" 'tailscale status --json --peers=false | grep -q "\"DNSName\": \"$BOX_NAME\."'
   check "FileVault is on" 'fdesetup status | grep -q "FileVault is On"'
   check "macOS updates do not install by themselves" '[ "$(defaults read /Library/Preferences/com.apple.SoftwareUpdate AutomaticallyInstallMacOSUpdates)" = 0 ] && [ "$(defaults read /Library/Preferences/com.apple.SoftwareUpdate CriticalUpdateInstall)" = 0 ]'
+  check "Siri is off" '[ "$(defaults read com.apple.assistant.support "Assistant Enabled")" = 0 ]'
+  check "the Mac sends no analytics or crash reports" '[ "$(defaults read "$DIAG_PLIST" AutoSubmit)" = 0 ] && [ "$(defaults read "$DIAG_PLIST" ThirdPartyDataSubmit)" = 0 ]'
+  check "AirDrop and Handoff are off" '[ "$(defaults read com.apple.NetworkBrowser DisableAirDrop)" = 1 ] && [ "$(defaults -currentHost read com.apple.coreservices.useractivityd ActivityAdvertisingAllowed)" = 0 ]'
+  check "GarageBand, iMovie, Keynote, Numbers and Pages are removed" '( for app in "${REMOVED_APPS[@]}"; do [ ! -d "/Applications/$app.app" ] || exit 1; done )'
+  check "no Apple ID is signed in" '! defaults read MobileMeAccounts Accounts 2>/dev/null | grep -q AccountID'
+  check "Chrome is installed" '[ -d "/Applications/Google Chrome.app" ]'
+  check "Chrome opens Aldine" '[ -f "$CHROME_INITIAL" ] && [ -f "$CHROME_BOOKMARKS" ]'
+  check "the Chrome profile blocks sign-in and data to Google" 'chrome_profile_installed'
+  check "Chrome is the default browser" 'chrome_is_default'
+  check "the Dock holds Chrome and System Settings" 'defaults read com.apple.dock persistent-apps | grep -q "Google Chrome.app" && ! defaults read com.apple.dock persistent-apps | grep -q "Safari.app"'
+  check "the user picture is the Aldine mark" '[ "$(dscl . -read "/Users/$USER" Picture | tail -1 | sed "s/^Picture: //; s/^ //")" = "$USER_PICTURE" ]'
+  check "the screen locks 5 seconds after the display sleeps" 'sysadminctl -screenLock status 2>&1 | grep -q "$SCREEN_LOCK_STATUS"'
   check "the deploy key reaches aldine" 'deploy_key_ready'
   check "aldine is cloned" '[ -d "$ALDINE_DIR/.git" ]'
   check "the box id is $BOX_NAME" 'grep -qxF "ALDINE_BOX_ID = \"$BOX_NAME\"" "$ALDINE_LOCAL"'
