@@ -1,0 +1,19 @@
+{
+  "fill-specializations" : [
+    { "value" : { "solid" : "srgb:0.16471,0.23137,0.16863,1.00000" } },
+    { "appearance" : "dark", "value" : { "solid" : "srgb:0.09412,0.09020,0.08235,1.00000" } }
+  ],
+  "groups" : [
+    {
+      "layers" : [
+        {
+          "image-name" : "mark.svg",
+          "name" : "mark"
+        }
+      ],
+      "shadow" : { "kind" : "neutral", "opacity" : 0.5 },
+      "translucency" : { "enabled" : true, "value" : 0.4 }
+    }
+  ],
+  "supported-platforms" : { "squares" : [ "macOS" ] }
+}

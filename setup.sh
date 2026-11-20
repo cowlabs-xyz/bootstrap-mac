@@ -424,10 +424,12 @@ echo "==> Aldine app"
 ALDINE_APP="/Applications/Aldine.app"
 sudo rm -rf "$ALDINE_APP"
 sudo osacompile -o "$ALDINE_APP" -e "do shell script \"open -a 'Google Chrome' $ALDINE_URL/\""
-# macOS takes the icon from Assets.car before applet.icns, so remove it.
-sudo rm -f "$ALDINE_APP/Contents/Resources/Assets.car"
-sudo /usr/libexec/PlistBuddy -c "Delete :CFBundleIconName" "$ALDINE_APP/Contents/Info.plist" &>/dev/null || true
-sudo cp assets/aldine.icns "$ALDINE_APP/Contents/Resources/applet.icns"
+# The icon follows the macOS icon style: default, dark, clear and tinted.
+# Assets.car holds it, and Aldine.icns is for older macOS. Both are compiled
+# from assets/aldine-icon/Aldine.icon. See the README to change the icon.
+sudo rm -f "$ALDINE_APP/Contents/Resources/applet.icns"
+sudo cp assets/aldine-icon/Assets.car assets/aldine-icon/Aldine.icns "$ALDINE_APP/Contents/Resources/"
+sudo /usr/libexec/PlistBuddy -c "Set :CFBundleIconName Aldine" -c "Set :CFBundleIconFile Aldine" "$ALDINE_APP/Contents/Info.plist"
 # The edits break the ad-hoc signature of the applet. Sign it again.
 sudo codesign --force --sign - "$ALDINE_APP"
 sudo touch "$ALDINE_APP"
