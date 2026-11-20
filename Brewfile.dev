@@ -6,6 +6,5 @@
 #
 # No gh: it authenticates with an account-wide token, which these machines
 # must not hold. Run gh from your laptop instead.
-brew "mise"
 # Inspecting the box SQLite database (newer than the macOS built-in)
 brew "sqlite"

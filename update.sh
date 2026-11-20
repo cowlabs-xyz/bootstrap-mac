@@ -71,7 +71,7 @@ fi
 echo "==> Aldine toolchain"
 ALDINE_DIR="$HOME/git/cowlabs/aldine"
 if [ "$ROLE" != "dev" ]; then
-  skip "dev machines only"
+  skip "dev machines only: a deploy updates a prod box"
 elif [ ! -d "$ALDINE_DIR/.git" ]; then
   skip "aldine not cloned — run ./setup.sh"
 else

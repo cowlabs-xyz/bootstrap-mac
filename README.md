@@ -44,25 +44,62 @@ unless you pass `--macos`, which reboots.
   headless server behaviour, Remote Login (SSH), Tailscale, Ollama
 - `Brewfile` — packages for all machines
 - `Brewfile.dev` — development toolchain, dev role only
-- `mise.toml` — `setup` and `update` as mise tasks, dev machines only
+- `mise.toml` — `setup` and `update` as mise tasks
 
-## Dev machines
+## Aldine on every machine
 
-The `dev` role additionally clones [aldine](https://github.com/cowlabs-xyz/aldine)
-to `~/git/cowlabs/aldine` and provisions it, so the machine can build and run
-Aldine over SSH:
+Both roles clone [aldine](https://github.com/cowlabs-xyz/aldine) to
+`~/git/cowlabs/aldine`, so aldine's `ops/box/deploy.sh` can install and restart
+it:
 
 - a deploy key for the clone (see below)
 - `mise install` — Go, Node, pnpm, buf and golangci-lint at the versions
   `aldine/mise.toml` pins. Homebrew installs none of these.
-- `mise run setup` — pnpm dependencies and the Playwright browser
-- `mise activate` added to `~/.zshrc`, so SSH sessions get the pinned tools
+- `brew shellenv` added to `~/.zprofile` and `mise activate` to `~/.zshrc`, so
+  SSH sessions and the login shell of the Aldine launchd agent get the tools
 
-Verify with `cd ~/git/cowlabs/aldine && mise run build && mise run test`.
+A dev box also runs `mise run setup`: pnpm dependencies and the Playwright
+browser. Verify a dev box with
+`cd ~/git/cowlabs/aldine && mise run build && mise run test`.
 
 `mise` also wraps this repo's own scripts, so both are driven the same way:
-`mise run setup`, `mise run update` and `mise run update-macos`. Only dev
-machines install `mise`; elsewhere run the scripts directly.
+`mise run setup`, `mise run update` and `mise run update-macos`.
+
+## Customer boxes
+
+The `prod` role sets up a box in a customer's office. It asks for every input
+at the start, then runs to the end with no other prompt:
+
+- the box name, `<customer>-<n>` such as `acme-1`. It is the box id, the macOS
+  hostname and the Tailscale machine name, and it never changes. `setup.sh`
+  keeps it in `~/.mac-box-name`.
+- the office wifi and its password, the fallback for the network cable.
+  Leave it empty to skip.
+- the logo.dev secret key, for vendor logos. Leave it empty to skip.
+- the Tailscale auth key, tagged `tag:aldine-prod`, if the box is not on the
+  tailnet yet.
+- the deploy key: `setup.sh` prints it, and waits until you add it to aldine.
+
+A re-run asks only for what is not set up yet.
+
+`setup.sh` then:
+
+- sets the hostname and the Tailscale machine name to the box name
+- joins the office wifi
+- turns off automatic macOS updates and security responses, as both can
+  restart the box. With FileVault on, a restart nobody expects leaves the box
+  down until someone types the password. Apply updates by hand.
+- clones aldine with a read-only deploy key
+- writes `~/git/cowlabs/aldine/mise.local.toml` with `ALDINE_BOX_ID` and the
+  logo.dev key. A box with its own id has no debug service. A re-run writes
+  the file again.
+
+It ends with a check of each of these, and of FileVault and Ollama. A failed
+check exits with an error: fix it, and run `./setup.sh` again.
+
+Before `setup.sh`, at the machine: create the `aldine` admin account, and turn
+on FileVault. Neither can be done from a script. `setup.sh` stops at the start
+if FileVault is off.
 
 ## GitHub access
 
@@ -74,7 +111,8 @@ installed. Run it from your laptop.
 Instead `setup.sh` generates a **deploy key** per machine, at
 `~/.ssh/aldine_deploy`, and prints the public half for you to add at
 [aldine → Settings → Deploy keys](https://github.com/cowlabs-xyz/aldine/settings/keys/new).
-Allow write access so the machine can push. The key reaches that one repository
+On a dev box, allow write access so the machine can push. On a customer box,
+leave it off: the box only pulls. The key reaches that one repository
 and nothing else, and you revoke it per machine from that same page. A deploy
 key must be unique across GitHub, so each machine needs its own.
 
@@ -204,13 +242,15 @@ Ollama reads the file the same way as `OLLAMA_NO_CLOUD=1`.
 `ops/box/ollama.json` together, then run `./setup.sh` on the machine. It
 installs the new version, restarts the agent, and removes the old version.
 
-## Manual steps after setup
+## Manual steps after setup on a dev box
 
 - Set a hostname with `sudo scutil --set ComputerName/HostName/LocalHostName`
 - Enable auto-login, so the Ollama agent restarts after an unattended reboot.
   Ollama runs as a user agent, not a system daemon, because Metal GPU access
   needs a login session; as a root daemon it would fall back to the CPU.
-- Pull the Ollama models the box needs: `ollama pull <model>`
 - Enable Screen Sharing in System Settings → General → Sharing, if wanted
+
+A deploy of aldine pulls the Ollama models. A customer box has FileVault on, so
+it has no auto-login: after a restart, someone types the password.
 
 No secrets belong in this repo — it is public.
