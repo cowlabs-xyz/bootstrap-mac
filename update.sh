@@ -79,7 +79,14 @@ elif [ ! -d "$ALDINE_DIR/.git" ]; then
 else
   # Tool versions are pinned in the repo's mise.toml, so the update is a pull
   # plus a re-install: never `mise upgrade`, which would drift off the pins.
-  (cd "$ALDINE_DIR" && git pull --ff-only && mise install && mise run setup)
+  # A deploy leaves the clone on a detached commit. Then the deploy moves the
+  # clone, so install the pins of that commit and do not pull.
+  if git -C "$ALDINE_DIR" symbolic-ref -q HEAD >/dev/null; then
+    git -C "$ALDINE_DIR" pull --ff-only
+  else
+    echo "    aldine is on a deployed commit: not pulling"
+  fi
+  (cd "$ALDINE_DIR" && mise install && mise run setup)
 fi
 
 # Restart tailscaled last, so its new binary runs. launchd itself does the
