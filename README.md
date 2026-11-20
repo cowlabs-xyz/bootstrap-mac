@@ -78,6 +78,8 @@ at the start, then runs to the end with no other prompt:
 - the logo.dev secret key, for vendor logos. Leave it empty to skip.
 - the Tailscale auth key, tagged `tag:aldine-prod`, if the box is not on the
   tailnet yet.
+- the backup drive and the passphrase of its volume. See
+  [Backup drive](#backup-drive).
 - the deploy key: `setup.sh` prints it, and waits until you add it to aldine.
 
 A re-run asks only for what is not set up yet.
@@ -90,16 +92,44 @@ A re-run asks only for what is not set up yet.
   restart the box. With FileVault on, a restart nobody expects leaves the box
   down until someone types the password. Apply updates by hand.
 - clones aldine with a read-only deploy key
-- writes `~/git/cowlabs/aldine/mise.local.toml` with `ALDINE_BOX_ID` and the
-  logo.dev key. A box with its own id has no debug service. A re-run writes
-  the file again.
+- sets up the backup drive
+- writes `~/git/cowlabs/aldine/mise.local.toml` with `ALDINE_BOX_ID`, the
+  logo.dev key and `ALDINE_BACKUP_DIR`. A box with its own id has no debug
+  service. A re-run writes the file again.
 
-It ends with a check of each of these, and of FileVault and Ollama. A failed
+It ends with a check of each of these, of the backup volume, and of FileVault
+and Ollama. A failed
 check exits with an error: fix it, and run `./setup.sh` again.
 
 Before `setup.sh`, at the machine: create the `aldine` admin account, and turn
 on FileVault. Neither can be done from a script. `setup.sh` stops at the start
 if FileVault is off.
+
+## Backup drive
+
+Aldine backs up its database and files every night at about 2am to an external
+drive plugged into the box, and keeps the last 14 copies. Both roles set up the
+drive, so the dev box backs up the same way as a customer box.
+
+- `setup.sh` lists the APFS containers on external disks, and asks which one
+  is the backup drive. It adds an encrypted APFS volume, `Aldine Backups`, to
+  it. What the drive holds already stays. A drive that is not APFS must be
+  erased as APFS first, in Disk Utility. Leave the choice empty to skip.
+- FileVault covers only the Mac's own disk, so the volume has a passphrase of
+  its own. Make it in 1Password first, titled `<box name> backup drive`, then
+  paste it. Give a copy to the customer, as with the FileVault recovery key.
+- The login keychain holds the passphrase. A launchd user agent,
+  `xyz.cowlabs.aldine.backup-volume`, unlocks and mounts the volume at login
+  and every 5 minutes, so a drive that is plugged in again comes back. It logs
+  to `~/Library/Logs/xyz.cowlabs.aldine.backup-volume.log`.
+- `ALDINE_BACKUP_DIR` in aldine's `mise.local.toml` turns backups on. On a dev
+  box, `setup.sh` adds it to the file with `mise set`. It applies at the next
+  deploy.
+- Spotlight does not index the volume.
+
+On a new Mac with a drive that holds backups, `setup.sh` finds the volume, and
+asks for its passphrase from 1Password. Then deploy, and restore with
+`mise run box:restore` in aldine.
 
 ## GitHub access
 
