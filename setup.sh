@@ -46,7 +46,8 @@ box_env_value() {
 # The value of a setting in aldine's mise.local.toml, or nothing. Boxes set up
 # before box.env kept their settings there.
 mise_local_value() {
-  sed -n "s/^$1 *= *\"\(.*\)\"\$/\1/p" "$ALDINE_LOCAL" 2>/dev/null | tail -n 1
+  [ -f "$ALDINE_LOCAL" ] || return 0
+  sed -n "s/^$1 *= *\"\(.*\)\"\$/\1/p" "$ALDINE_LOCAL" | tail -n 1
 }
 
 # --- Inputs -------------------------------------------------------------
@@ -955,6 +956,22 @@ env_line() {
     *) printf '%s=%s\n' "$1" "$2" ;;
   esac
 }
+# The other settings that box-server reads. A box set up before box.env kept
+# them in mise.local.toml: setup.sh adds them to box.env once, and box.env
+# keeps them as other lines. The settings of the box watch, such as
+# ALDINE_WATCH_BOXES and ALDINE_SLACK_WEBHOOK_URL, are not for box-server.
+ALDINE_CARRY_KEYS="ALDINE_LOG_LEVEL ALDINE_OLLAMA_URL"
+ALDINE_CARRY_LINES=""
+for key in $ALDINE_CARRY_KEYS; do
+  value="$(mise_local_value "$key")"
+  if [ -n "$value" ] && ! grep -qE "^$key=" "$ALDINE_ENV" 2>/dev/null; then
+    ALDINE_CARRY_LINES+="$(env_line "$key" "$value")"$'\n'
+  fi
+done
+ALDINE_NOT_CARRIED="$(sed -n 's/^\(ALDINE_[A-Za-z0-9_]*\) *=.*/\1/p' "$ALDINE_LOCAL" 2>/dev/null | grep -vE "^($ALDINE_ENV_KEYS|${ALDINE_CARRY_KEYS// /|})\$" | sort -u | tr '\n' ' ' || true)"
+if [ -n "$ALDINE_NOT_CARRIED" ]; then
+  echo "    not carried over from mise.local.toml, as box-server does not read them: $ALDINE_NOT_CARRIED"
+fi
 ALDINE_ENV_WANT="$(
   echo "# Written by bootstrap-mac setup.sh. A re-run writes the ALDINE_ settings that setup.sh sets, and keeps other lines."
   env_line ALDINE_BOX_ID "$ALDINE_BOX_ID"
@@ -964,6 +981,7 @@ ALDINE_ENV_WANT="$(
   [ -z "$ALDINE_BACKUP_SET" ] || env_line ALDINE_BACKUP_DIR "$ALDINE_BACKUP_SET"
   [ -z "$LOGO_DEV_KEY" ] || env_line ALDINE_LOGO_DEV_SECRET_KEY "$LOGO_DEV_KEY"
   env_line ALDINE_LOG_FORMAT console
+  printf '%s' "$ALDINE_CARRY_LINES"
   grep -E '^[A-Za-z_][A-Za-z0-9_]*=' "$ALDINE_ENV" 2>/dev/null | grep -vE "^($ALDINE_ENV_KEYS)=" || true
 )"
 mkdir -p "$(dirname "$ALDINE_ENV")"
