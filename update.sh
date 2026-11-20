@@ -75,15 +75,23 @@ fi
 # halfway, as `brew services restart` can. The session drops for a few seconds:
 # reconnect. A macOS update restarts the machine anyway, so it skips this.
 restart_tailscaled() {
-  if [ "$MACOS" = true ] || ! sudo launchctl print system/sh.brew.tailscale &>/dev/null; then
+  echo "==> Restarting tailscaled"
+  if [ "$MACOS" = true ]; then
+    echo "    skipped: the macOS update restarts the machine, or the next restart runs the new binary"
     return
   fi
-  echo "==> Restarting tailscaled"
+  if ! sudo launchctl print system/sh.brew.tailscale &>/dev/null; then
+    echo "    skipped: tailscaled is not loaded as sh.brew.tailscale"
+    return
+  fi
   if over_tailnet; then
     echo "    This session drops now. Reconnect in a few seconds."
     trap "" HUP
   fi
-  sudo launchctl kickstart -k system/sh.brew.tailscale
+  if ! sudo launchctl kickstart -k system/sh.brew.tailscale; then
+    echo "    FAILED to restart tailscaled. Run: sudo launchctl kickstart -k system/sh.brew.tailscale"
+    exit 1
+  fi
 }
 
 echo "==> macOS software updates"

@@ -228,7 +228,10 @@ sudo launchctl kickstart -k system/sh.brew.tailscale
 
 The session drops for a few seconds. `update.sh` restarts it this way, as its
 last step. To stop Tailscale on purpose, unload the watchdog first:
-`sudo launchctl bootout system/ai.aldine.tailscale-watchdog`.
+`sudo launchctl bootout system/ai.aldine.tailscale-watchdog`. That lasts until
+the next restart or run of `setup.sh`, which load it again. To keep it off,
+also run `sudo launchctl disable system/ai.aldine.tailscale-watchdog`, and
+`enable` it again after.
 
 A customer box upgrades packages only through `update.sh`, by hand. A re-run of
 `setup.sh` there installs what is missing, and upgrades nothing.
