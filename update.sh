@@ -52,6 +52,18 @@ if [ -n "$BREW" ]; then
   eval "$("$BREW" shellenv)"
   brew update
   brew upgrade
+  # `sudo brew services` makes tailscaled root-owned, so `brew cleanup` cannot
+  # remove an old tailscale keg, and fails. Remove the old kegs with sudo first.
+  # The running tailscaled keeps its open binary until the restart below.
+  TS_CURRENT="$(readlink "$(brew --prefix)/opt/tailscale" 2>/dev/null || true)"
+  if [ -n "$TS_CURRENT" ]; then
+    for keg in "$(brew --prefix)"/Cellar/tailscale/*; do
+      if [ -d "$keg" ] && [ "$(basename "$keg")" != "$(basename "$TS_CURRENT")" ]; then
+        echo "    removing the old tailscale keg $(basename "$keg")"
+        sudo rm -rf "$keg"
+      fi
+    done
+  fi
   brew cleanup -s
   brew autoremove
 else
