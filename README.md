@@ -40,11 +40,10 @@ unless you pass `--macos`, which reboots.
 
 - `bootstrap.sh` — curl-able entry point (Homebrew + clone + hand-off)
 - `update.sh` — routine updates: this repo, Homebrew, the toolchain, macOS
-- `setup.sh` — main setup: `brew bundle`, macOS defaults, security lockdown, Siri, analytics, AirDrop and Handoff off, the bundled App Store apps removed, a Dock with System Settings only (and Terminal on dev), the Aldine mark as the desktop picture and the user picture (images in `assets/`; the desktop picture needs a logged-in session),
+- `setup.sh` — main setup: `brew bundle`, macOS defaults, security lockdown, Siri, analytics, AirDrop and Handoff off, the bundled App Store apps removed, Google Chrome, an Aldine app that opens Aldine in Chrome, a Dock with Aldine, Chrome and System Settings (and Terminal on dev), the Aldine mark as the desktop picture and the user picture (images in `assets/`; the desktop picture needs a logged-in session),
   headless server behaviour, Remote Login (SSH), Tailscale, Ollama
 - `Brewfile` — packages for all machines
 - `Brewfile.dev` — development toolchain, dev role only
-- `Brewfile.prod` — Google Chrome, prod role only
 - `mise.toml` — `setup` and `update` as mise tasks
 
 ## Aldine on every machine
@@ -89,9 +88,8 @@ A re-run asks only for what is not set up yet.
 
 - sets the hostname and the Tailscale machine name to the box name
 - joins the office wifi
-- installs Google Chrome with Aldine as its start page and a bookmark. A configuration profile, `assets/chrome.mobileconfig`, blocks sign-in to a Google profile, search suggestions and usage statistics. A person installs the profile in System Settings, and confirms Chrome as the default browser.
+- makes Aldine the start page of Chrome and a bookmark. A configuration profile, `assets/chrome.mobileconfig`, blocks sign-in to a Google profile, search suggestions and usage statistics. A person installs the profile in System Settings, and confirms Chrome as the default browser.
 - locks the screen 5 seconds after the display sleeps. It asks for the password of the box user.
-- puts Chrome in the Dock.
 - turns off automatic macOS updates and security responses, as both can
   restart the box. With FileVault on, a restart nobody expects leaves the box
   down until someone types the password. Apply updates by hand.

@@ -272,7 +272,6 @@ echo "==> Installing packages from Brewfile"
 # upgrades nothing.
 if [ "$ROLE" = "prod" ]; then
   HOMEBREW_BUNDLE_NO_UPGRADE=1 brew bundle --file Brewfile
-  HOMEBREW_BUNDLE_NO_UPGRADE=1 brew bundle --file Brewfile.prod
 else
   brew bundle --file Brewfile
 fi
@@ -353,13 +352,15 @@ if defaults read MobileMeAccounts Accounts 2>/dev/null | grep -q AccountID; then
   echo "    WARNING: this Mac is signed in to an Apple ID. Sign out in System Settings."
 fi
 
+# Vite serves Aldine on this port on every box. See ops/box/deploy.sh in aldine.
+ALDINE_URL="http://localhost:5173"
+
 if [ "$ROLE" = "prod" ]; then
   echo "==> Chrome"
   # Staff open Aldine on the box in Chrome, not Safari. Aldine is the start
   # page, the home page and a bookmark. Chrome reads the initial preferences
   # when it makes a new profile only, so a profile made before this step keeps
   # its own settings.
-  ALDINE_URL="http://localhost:5173"
   CHROME_SUPPORT="/Library/Google"
   CHROME_INITIAL="$CHROME_SUPPORT/Google Chrome Initial Preferences"
   CHROME_BOOKMARKS="$CHROME_SUPPORT/aldine-bookmarks.html"
@@ -417,15 +418,28 @@ PREFS
   fi
 fi
 
+echo "==> Aldine app"
+# An app with the Aldine icon that opens Aldine in Chrome, for the Dock. A
+# re-run builds it again.
+ALDINE_APP="/Applications/Aldine.app"
+sudo rm -rf "$ALDINE_APP"
+sudo osacompile -o "$ALDINE_APP" -e "do shell script \"open -a 'Google Chrome' $ALDINE_URL/\""
+# macOS takes the icon from Assets.car before applet.icns, so remove it.
+sudo rm -f "$ALDINE_APP/Contents/Resources/Assets.car"
+sudo /usr/libexec/PlistBuddy -c "Delete :CFBundleIconName" "$ALDINE_APP/Contents/Info.plist" &>/dev/null || true
+sudo cp assets/aldine.icns "$ALDINE_APP/Contents/Resources/applet.icns"
+# The edits break the ad-hoc signature of the applet. Sign it again.
+sudo codesign --force --sign - "$ALDINE_APP"
+sudo touch "$ALDINE_APP"
+
 echo "==> Dock"
 # The Dock holds only what a box needs, after Finder, which is always first:
-# Chrome on a customer box, Terminal on a dev box, and System Settings. A
-# re-run sets it again.
+# Aldine, Chrome, Terminal on a dev box, and System Settings. A re-run sets
+# it again.
 dock_tile() {
   echo "<dict><key>tile-data</key><dict><key>file-data</key><dict><key>_CFURLString</key><string>$1</string><key>_CFURLStringType</key><integer>0</integer></dict></dict></dict>"
 }
-DOCK_APPS=()
-[ -d "/Applications/Google Chrome.app" ] && DOCK_APPS+=("/Applications/Google Chrome.app")
+DOCK_APPS=("$ALDINE_APP" "/Applications/Google Chrome.app")
 [ "$ROLE" = "dev" ] && DOCK_APPS+=("/System/Applications/Utilities/Terminal.app")
 DOCK_APPS+=("/System/Applications/System Settings.app")
 DOCK_TILES=()
