@@ -447,7 +447,9 @@ USER_PICTURE="/Library/User Pictures/Aldine.png"
 sudo mkdir -p "/Library/Desktop Pictures" "/Library/User Pictures"
 sudo cp assets/wallpaper.png "$WALLPAPER"
 sudo cp assets/user-picture.png "$USER_PICTURE"
-# macOS shows JPEGPhoto before Picture, so delete it.
+# macOS shows an emoji or Memoji avatar (AvatarRepresentation) and a photo
+# (JPEGPhoto) before Picture, so delete both.
+sudo dscl . -delete "/Users/$USER" AvatarRepresentation &>/dev/null || true
 sudo dscl . -delete "/Users/$USER" JPEGPhoto &>/dev/null || true
 sudo dscl . -create "/Users/$USER" Picture "$USER_PICTURE"
 # Setting the desktop picture needs a logged-in session, and macOS can ask
@@ -888,7 +890,7 @@ if [ "$ROLE" = "prod" ]; then
   check "the Chrome profile blocks sign-in and data to Google" 'chrome_profile_installed'
   check "Chrome is the default browser" 'chrome_is_default'
   check "the Dock holds Chrome and System Settings" 'defaults read com.apple.dock persistent-apps | grep -q "Google Chrome.app" && ! defaults read com.apple.dock persistent-apps | grep -q "Safari.app"'
-  check "the user picture is the Aldine mark" '[ "$(dscl . -read "/Users/$USER" Picture | tail -1 | sed "s/^Picture: //; s/^ //")" = "$USER_PICTURE" ]'
+  check "the user picture is the Aldine mark" '! dscl . -read "/Users/$USER" AvatarRepresentation && [ "$(dscl . -read "/Users/$USER" Picture | tail -1 | sed "s/^Picture: //; s/^ //")" = "$USER_PICTURE" ]'
   check "the screen locks 5 seconds after the display sleeps" 'sysadminctl -screenLock status 2>&1 | grep -q "$SCREEN_LOCK_STATUS"'
   check "the deploy key reaches aldine" 'deploy_key_ready'
   check "aldine is cloned" '[ -d "$ALDINE_DIR/.git" ]'
