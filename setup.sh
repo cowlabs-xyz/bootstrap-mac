@@ -438,8 +438,9 @@ echo "==> Desktop picture and user picture"
 # its own, so a pull of this repo does not change them under the box.
 WALLPAPER="/Library/Desktop Pictures/Aldine.png"
 USER_PICTURE="/Library/User Pictures/Aldine.png"
+# A fresh macOS has neither folder: its own pictures are under /System.
+sudo mkdir -p "/Library/Desktop Pictures" "/Library/User Pictures"
 sudo cp assets/wallpaper.png "$WALLPAPER"
-sudo mkdir -p "/Library/User Pictures"
 sudo cp assets/user-picture.png "$USER_PICTURE"
 # macOS shows JPEGPhoto before Picture, so delete it.
 sudo dscl . -delete "/Users/$USER" JPEGPhoto &>/dev/null || true
