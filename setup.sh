@@ -417,20 +417,25 @@ PREFS
   fi
 fi
 
-if [ "$ROLE" = "prod" ]; then
-  echo "==> Dock"
-  # The Dock holds Chrome and System Settings, after Finder, which is always
-  # first. A re-run sets it again.
-  dock_tile() {
-    echo "<dict><key>tile-data</key><dict><key>file-data</key><dict><key>_CFURLString</key><string>$1</string><key>_CFURLStringType</key><integer>0</integer></dict></dict></dict>"
-  }
-  defaults write com.apple.dock persistent-apps -array \
-    "$(dock_tile "/Applications/Google Chrome.app")" \
-    "$(dock_tile "/System/Applications/System Settings.app")"
-  defaults write com.apple.dock persistent-others -array
-  defaults write com.apple.dock show-recents -bool false
-  killall Dock &>/dev/null || true
-fi
+echo "==> Dock"
+# The Dock holds only what a box needs, after Finder, which is always first:
+# Chrome on a customer box, Terminal on a dev box, and System Settings. A
+# re-run sets it again.
+dock_tile() {
+  echo "<dict><key>tile-data</key><dict><key>file-data</key><dict><key>_CFURLString</key><string>$1</string><key>_CFURLStringType</key><integer>0</integer></dict></dict></dict>"
+}
+DOCK_APPS=()
+[ -d "/Applications/Google Chrome.app" ] && DOCK_APPS+=("/Applications/Google Chrome.app")
+[ "$ROLE" = "dev" ] && DOCK_APPS+=("/System/Applications/Utilities/Terminal.app")
+DOCK_APPS+=("/System/Applications/System Settings.app")
+DOCK_TILES=()
+for app in "${DOCK_APPS[@]}"; do
+  DOCK_TILES+=("$(dock_tile "$app")")
+done
+defaults write com.apple.dock persistent-apps -array "${DOCK_TILES[@]}"
+defaults write com.apple.dock persistent-others -array
+defaults write com.apple.dock show-recents -bool false
+killall Dock &>/dev/null || true
 
 # Every box shows the Aldine mark as its desktop picture and user picture.
 echo "==> Desktop picture and user picture"
