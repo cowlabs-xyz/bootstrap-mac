@@ -98,6 +98,100 @@ if [ "$ROLE" = "prod" ]; then
   fi
 fi
 
+# The backup drive: an encrypted APFS volume on an external disk, which
+# box-server backs up to every night. FileVault covers only the Mac's own disk,
+# so the volume has a passphrase of its own. The login keychain holds it, so an
+# agent unlocks the volume after a restart. 1Password and the office keep it too.
+BACKUP_VOLUME="Aldine Backups"
+BACKUP_DIR="/Volumes/$BACKUP_VOLUME"
+BACKUP_SERVICE="xyz.cowlabs.aldine.backup-volume"
+BACKUP_LABEL="xyz.cowlabs.aldine.backup-volume"
+BACKUP_PLIST="$HOME/Library/LaunchAgents/$BACKUP_LABEL.plist"
+BACKUP_CONTAINER=""
+BACKUP_PASSPHRASE=""
+
+# The UUID of the backup volume, on any disk that is plugged in, or nothing.
+backup_volume_uuid() {
+  diskutil apfs list -plist | plutil -convert json -o - - |
+    jq -r --arg name "$BACKUP_VOLUME" '.Containers[].Volumes[] | select(.Name == $name) | .APFSVolumeUUID' |
+    head -n 1
+}
+
+# Each APFS container on an external disk, as "<container> <free bytes> <volumes>".
+backup_containers() {
+  diskutil apfs list -plist | plutil -convert json -o - - |
+    jq -r '.Containers[] | [.ContainerReference, .DesignatedPhysicalStore, .CapacityFree, ([.Volumes[].Name] | join(", "))] | @tsv' |
+    while IFS=$'\t' read -r container store free names; do
+      if [ "$(diskutil info -plist "$store" | plutil -extract Internal raw - 2>/dev/null)" = "false" ]; then
+        printf '%s\t%s\t%s\n' "$container" "$free" "$names"
+      fi
+    done
+}
+
+# Ask for the passphrase of the backup volume, twice.
+read_backup_passphrase() {
+  while :; do
+    read -rsp "    $1: " BACKUP_PASSPHRASE
+    echo
+    if [ "${#BACKUP_PASSPHRASE}" -lt 20 ]; then
+      echo "    A passphrase has 20 characters or more."
+      continue
+    fi
+    local again
+    read -rsp "    The same passphrase again: " again
+    echo
+    [ "$again" = "$BACKUP_PASSPHRASE" ] && break
+    echo "    The two do not match."
+  done
+}
+
+BACKUP_UUID="$(backup_volume_uuid)"
+if [ -n "$BACKUP_UUID" ]; then
+  echo "    backup volume: $BACKUP_VOLUME, already there"
+  # A new Mac with a drive that holds backups: the passphrase is in 1Password.
+  if ! security find-generic-password -s "$BACKUP_SERVICE" &>/dev/null; then
+    until [ -n "$BACKUP_PASSPHRASE" ] && printf '%s' "$BACKUP_PASSPHRASE" | diskutil apfs unlockVolume "$BACKUP_UUID" -stdinpassphrase -verify &>/dev/null; do
+      read_backup_passphrase "Passphrase of $BACKUP_VOLUME, from 1Password"
+    done
+  fi
+else
+  # Adding a volume keeps what the disk holds, such as a copy of older data.
+  BACKUP_CHOICES="$(backup_containers)"
+  if [ -z "$BACKUP_CHOICES" ]; then
+    echo "    No external APFS disk is plugged in, so the box gets no backup drive."
+    echo "    Plug in the backup drive and run ./setup.sh again. A drive that is not"
+    echo "    APFS must be erased as APFS first, in Disk Utility."
+  else
+    echo "    The backup drive gets a new encrypted volume, $BACKUP_VOLUME."
+    echo "    What the drive holds stays. The external APFS disks:"
+    i=0
+    while IFS=$'\t' read -r container free names; do
+      i=$((i + 1))
+      echo "      $i) $container, $((free / 1000000000)) GB free, holds: ${names:-nothing}"
+    done <<< "$BACKUP_CHOICES"
+    while :; do
+      read -rp "    Backup drive [1-$i, empty to skip]: " choice
+      [ -z "$choice" ] && break
+      if [[ "$choice" =~ ^[0-9]+$ ]] && [ "$choice" -ge 1 ] && [ "$choice" -le "$i" ]; then
+        BACKUP_CONTAINER="$(sed -n "${choice}p" <<< "$BACKUP_CHOICES" | cut -f1)"
+        break
+      fi
+    done
+    if [ -n "$BACKUP_CONTAINER" ]; then
+      echo "    Make a passphrase in 1Password, titled \"${BOX_NAME:-$(hostname -s)} backup drive\"."
+      echo "    Give a copy to the office, as with the FileVault recovery key."
+      read_backup_passphrase "Passphrase for $BACKUP_VOLUME"
+    fi
+  fi
+fi
+
+# The passphrase goes in the login keychain, which a session over SSH can hold
+# locked. Unlock it now, while a person is at the keyboard.
+if [ -n "$BACKUP_PASSPHRASE" ] && ! security show-keychain-info "$HOME/Library/Keychains/login.keychain-db" &>/dev/null; then
+  echo "    The login keychain is locked. Type the password of $USER to unlock it."
+  security unlock-keychain "$HOME/Library/Keychains/login.keychain-db"
+fi
+
 # A tagged auth key gives the node the identity of tag:aldine-$ROLE rather
 # than of a user account, and tagged nodes never expire. The key is a secret:
 # pass it as TS_AUTHKEY, and never commit one to this public repo. On a re-run,
@@ -424,6 +518,70 @@ else
   echo "    (got: ${OLLAMA_RUNNING:-nothing}). See ~/Library/Logs/$OLLAMA_LABEL.log"
 fi
 
+echo "==> Backup drive"
+if [ -n "$BACKUP_CONTAINER" ]; then
+  printf '%s' "$BACKUP_PASSPHRASE" | diskutil apfs addVolume "$BACKUP_CONTAINER" APFS "$BACKUP_VOLUME" -stdinpassphrase
+  BACKUP_UUID="$(backup_volume_uuid)"
+fi
+if [ -n "$BACKUP_PASSPHRASE" ]; then
+  # Only security reads the item, so the agent reads it with no prompt.
+  security add-generic-password -U -a "$BACKUP_VOLUME" -s "$BACKUP_SERVICE" \
+    -T /usr/bin/security -w "$BACKUP_PASSPHRASE" "$HOME/Library/Keychains/login.keychain-db"
+fi
+if [ -n "$BACKUP_UUID" ]; then
+  # The agent unlocks and mounts the volume at login, and every 5 minutes, so a
+  # drive that is plugged in again comes back. It does nothing while the volume
+  # is mounted, or no disk holds it.
+  BACKUP_PLIST_WANT="$(cat <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Written by bootstrap-mac setup.sh. Edits are overwritten. -->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>$BACKUP_LABEL</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/sh</string>
+    <string>-c</string>
+    <string>[ -d "$BACKUP_DIR" ] &amp;&amp; exit 0; uuid="\$(diskutil apfs list -plist | plutil -convert json -o - - | /usr/bin/jq -r '.Containers[].Volumes[] | select(.Name == "$BACKUP_VOLUME") | .APFSVolumeUUID' | head -n 1)"; [ -n "\$uuid" ] || exit 0; /usr/bin/security find-generic-password -s "$BACKUP_SERVICE" -w | diskutil apfs unlockVolume "\$uuid" -stdinpassphrase</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>StartInterval</key>
+  <integer>300</integer>
+  <key>StandardOutPath</key>
+  <string>$HOME/Library/Logs/$BACKUP_LABEL.log</string>
+  <key>StandardErrorPath</key>
+  <string>$HOME/Library/Logs/$BACKUP_LABEL.log</string>
+</dict>
+</plist>
+EOF
+)"
+  if [ "$(cat "$BACKUP_PLIST" 2>/dev/null)" != "$BACKUP_PLIST_WANT" ]; then
+    mkdir -p "$HOME/Library/LaunchAgents" "$HOME/Library/Logs"
+    echo "$BACKUP_PLIST_WANT" > "$BACKUP_PLIST"
+    launchctl bootout "gui/$(id -u)/$BACKUP_LABEL" 2>/dev/null || true
+  fi
+  launchctl bootstrap "gui/$(id -u)" "$BACKUP_PLIST" 2>/dev/null || true
+  launchctl kickstart "gui/$(id -u)/$BACKUP_LABEL" || true
+  for _ in $(seq 1 15); do
+    [ -d "$BACKUP_DIR" ] && break
+    sleep 1
+  done
+  if [ -d "$BACKUP_DIR" ]; then
+    # Keep the permissions that box-server sets, and keep Spotlight out of the
+    # backups.
+    sudo diskutil enableOwnership "$BACKUP_DIR" >/dev/null
+    sudo mdutil -i off "$BACKUP_DIR" >/dev/null
+    echo "    $BACKUP_DIR is mounted"
+  else
+    echo "    WARNING: $BACKUP_VOLUME does not mount. See ~/Library/Logs/$BACKUP_LABEL.log"
+  fi
+else
+  echo "    no backup drive: the box takes no backups"
+fi
+
 echo "==> Aldine"
 # Both roles run Aldine from a clone: ops/box/deploy.sh in aldine installs and
 # restarts it. Activate mise in the shells, so SSH sessions and the login shell
@@ -452,8 +610,17 @@ EOF
     ALDINE_LOCAL_WANT="$ALDINE_LOCAL_WANT
 ALDINE_LOGO_DEV_SECRET_KEY = \"$LOGO_DEV_KEY\""
   fi
+  if [ -n "$BACKUP_UUID" ]; then
+    ALDINE_LOCAL_WANT="$ALDINE_LOCAL_WANT
+ALDINE_BACKUP_DIR = \"$BACKUP_DIR\""
+  fi
   ( umask 077 && echo "$ALDINE_LOCAL_WANT" > "$ALDINE_LOCAL" )
   mise trust "$ALDINE_LOCAL"
+elif [ -n "$BACKUP_UUID" ]; then
+  # A dev box keeps its own mise.local.toml. Add the setting to it.
+  ( umask 077 && touch "$ALDINE_LOCAL" )
+  mise trust "$ALDINE_LOCAL"
+  (cd "$ALDINE_DIR" && mise set --file "$ALDINE_LOCAL" "ALDINE_BACKUP_DIR=$BACKUP_DIR")
 fi
 
 # mise refuses to run an untrusted config file
@@ -492,6 +659,11 @@ if [ "$ROLE" = "prod" ]; then
     echo "    -       no logo.dev key: vendors show their initials"
   fi
   check "Ollama $OLLAMA_VERSION answers" 'curl -fsS http://127.0.0.1:11434/api/version | grep -q "\"$OLLAMA_VERSION\""'
+  check "the backup volume $BACKUP_VOLUME is encrypted" 'diskutil info "$BACKUP_DIR" | grep -qE "FileVault: +Yes"'
+  check "the backup volume is mounted and writable" 'touch "$BACKUP_DIR/.setup-check" && rm "$BACKUP_DIR/.setup-check"'
+  check "the keychain holds the passphrase of the backup volume" 'security find-generic-password -s "$BACKUP_SERVICE"'
+  check "the backup volume unlocks at login" 'launchctl print "gui/$(id -u)/$BACKUP_LABEL"'
+  check "the box backs up to $BACKUP_DIR" 'grep -qxF "ALDINE_BACKUP_DIR = \"$BACKUP_DIR\"" "$ALDINE_LOCAL"'
   WIFI_WANT="${WIFI_WANT:-$(cat "$WIFI_FILE" 2>/dev/null || true)}"
   if [ -n "$WIFI_WANT" ]; then
     check "the office wifi $WIFI_WANT is saved" 'networksetup -listpreferredwirelessnetworks "$WIFI_DEVICE" | sed "s/^[[:space:]]*//" | grep -qxF "$WIFI_WANT"'
@@ -506,6 +678,10 @@ if [ "$ROLE" = "prod" ]; then
   echo "Done. $BOX_NAME is set up. Deploy Aldine to it from your laptop."
 else
   echo
+  if [ ! -d "$BACKUP_DIR" ]; then
+    echo "WARNING: no backup drive is mounted, so this box takes no backups."
+    echo
+  fi
   echo "Done. Remaining manual steps:"
   echo "  - Set a hostname: sudo scutil --set ComputerName/HostName/LocalHostName"
   echo "  - Enable Screen Sharing (System Settings > General > Sharing) if wanted"
