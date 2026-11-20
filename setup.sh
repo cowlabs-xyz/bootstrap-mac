@@ -984,18 +984,37 @@ chmod 600 "$ALDINE_ENV"
 mkdir -p "$ALDINE_DATA_DIR"
 echo "    $ALDINE_ENV: box id $ALDINE_BOX_ID"
 
+echo
+echo "==> Check"
+FAILED=0
+check() {
+  if eval "$2" &>/dev/null; then
+    echo "    ok      $1"
+  else
+    echo "    FAILED  $1"
+    FAILED=$((FAILED + 1))
+  fi
+}
+# The settings in box.env, on both roles. A deploy of aldine reads the box id
+# and the deploy mode from box.env.
+check_aldine_settings() {
+  check "only $USER reads the Aldine settings" '[ "$(stat -f %Lp "$ALDINE_ENV")" = 600 ]'
+  check "the box id is $ALDINE_BOX_ID" '[ "$(box_env_value ALDINE_BOX_ID)" = "$ALDINE_BOX_ID" ]'
+  if [ -n "$ALDINE_DEPLOY_MODE" ]; then
+    check "the deploy mode is $ALDINE_DEPLOY_MODE" '[ "$(box_env_value ALDINE_DEPLOY_MODE)" = "$ALDINE_DEPLOY_MODE" ]'
+  else
+    check "the debug service is off" '[ -z "$(box_env_value ALDINE_DEPLOY_MODE)" ]'
+  fi
+  check "Aldine serves on localhost:5173" '[ "$(box_env_value ALDINE_ADDR)" = 127.0.0.1:5173 ]'
+  check "the data folder $ALDINE_DATA_DIR is there" '[ "$(box_env_value ALDINE_DATA_DIR)" = "$ALDINE_DATA_DIR" ] && [ -d "$ALDINE_DATA_DIR" ]'
+  if [ -n "$(box_env_value ALDINE_LOGO_DEV_SECRET_KEY)" ]; then
+    echo "    ok      the logo.dev key is set"
+  else
+    echo "    -       no logo.dev key: vendors show their initials"
+  fi
+}
+
 if [ "$ROLE" = "prod" ]; then
-  echo
-  echo "==> Check"
-  FAILED=0
-  check() {
-    if eval "$2" &>/dev/null; then
-      echo "    ok      $1"
-    else
-      echo "    FAILED  $1"
-      FAILED=$((FAILED + 1))
-    fi
-  }
   check "hostname is $BOX_NAME" '[ "$(scutil --get HostName)" = "$BOX_NAME" ]'
   check "tailscaled is loaded" 'sudo launchctl print "system/$TS_LABEL"'
   check "Tailscale comes back by itself when something unloads it" 'sudo launchctl print "system/$TS_WATCHDOG_LABEL" && [ -f "$TS_KEG_PLIST" ]'
@@ -1014,16 +1033,7 @@ if [ "$ROLE" = "prod" ]; then
   check "the Dock holds Chrome and System Settings" 'defaults read com.apple.dock persistent-apps | grep -q "Google Chrome.app" && ! defaults read com.apple.dock persistent-apps | grep -q "Safari.app"'
   check "the user picture is the Aldine mark" '! dscl . -read "/Users/$USER" AvatarRepresentation && [ "$(dscl . -read "/Users/$USER" Picture | tail -1 | sed "s/^Picture: //; s/^ //")" = "$USER_PICTURE" ]'
   check "the screen locks 5 seconds after the display sleeps" 'sysadminctl -screenLock status 2>&1 | grep -q "$SCREEN_LOCK_STATUS"'
-  check "only $USER reads the Aldine settings" '[ "$(stat -f %Lp "$ALDINE_ENV")" = 600 ]'
-  check "the box id is $BOX_NAME" '[ "$(box_env_value ALDINE_BOX_ID)" = "$BOX_NAME" ]'
-  check "the debug service is off" '[ -z "$(box_env_value ALDINE_DEPLOY_MODE)" ]'
-  check "Aldine serves on localhost:5173" '[ "$(box_env_value ALDINE_ADDR)" = 127.0.0.1:5173 ]'
-  check "the data folder $ALDINE_DATA_DIR is there" '[ -d "$(box_env_value ALDINE_DATA_DIR)" ]'
-  if [ -n "$(box_env_value ALDINE_LOGO_DEV_SECRET_KEY)" ]; then
-    echo "    ok      the logo.dev key is set"
-  else
-    echo "    -       no logo.dev key: vendors show their initials"
-  fi
+  check_aldine_settings
   check "Ollama $OLLAMA_VERSION answers" 'curl -fsS http://127.0.0.1:11434/api/version | grep -q "\"$OLLAMA_VERSION\""'
   check "the box rotates its logs" 'launchctl print "gui/$(id -u)/$ROTATE_LABEL" | grep -q "last exit code = 0"'
   # A customer box holds the only copy of its data, so it needs its drive.
@@ -1050,7 +1060,12 @@ if [ "$ROLE" = "prod" ]; then
   echo "Done. $BOX_NAME is set up. Deploy a release to it from your laptop:"
   echo "  mise run box:deploy <box-tag> --box $USER@$BOX_NAME"
 else
+  check_aldine_settings
   echo
+  if [ "$FAILED" -gt 0 ]; then
+    echo "$FAILED check(s) failed. Fix them, and run ./setup.sh again."
+    exit 1
+  fi
   if [ ! -d "$BACKUP_DIR" ]; then
     echo "WARNING: no backup drive is mounted, so this box takes no backups."
     echo
