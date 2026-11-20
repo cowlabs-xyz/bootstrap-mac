@@ -41,27 +41,48 @@ unless you pass `--macos`, which reboots.
 - `bootstrap.sh` — curl-able entry point (Homebrew + clone + hand-off)
 - `update.sh` — routine updates: this repo, Homebrew, the toolchain, macOS
 - `setup.sh` — main setup: `brew bundle`, macOS defaults, security lockdown, Siri, analytics, AirDrop and Handoff off, the bundled App Store apps removed, Google Chrome, an Aldine app that opens Aldine in Chrome, a Dock with Aldine, Chrome and System Settings (and Terminal on dev), the Aldine mark as the desktop picture and the user picture (images in `assets/`; the desktop picture needs a logged-in session),
-  headless server behaviour, Remote Login (SSH), Tailscale, Ollama, log rotation
+  headless server behaviour, Remote Login (SSH), Tailscale, Ollama, log rotation, the Aldine settings in `~/.config/aldine/box.env`
 - `rotate-logs.sh` — rotates the Aldine and Ollama logs; `setup.sh` installs it
 - `Brewfile` — packages for all machines
-- `Brewfile.dev` — development toolchain, dev role only
+- `Brewfile.dev` — development toolchain, dev role only, mise included
 - `mise.toml` — `setup` and `update` as mise tasks
 
-## Aldine on every machine
+## Aldine on a box
 
-Both roles clone [aldine](https://github.com/cowlabs-xyz/aldine) to
-`~/git/cowlabs/aldine`, so aldine's `ops/box/deploy.sh` can install and restart
-it:
+Every box runs one `box-server` binary, which serves the API and the web app on `http://localhost:5173`. A deploy from aldine installs it. `setup.sh` installs no part of Aldine itself. It writes the settings that `box-server` reads. See [Aldine settings](#aldine-settings).
 
-- a deploy key for the clone (see below)
-- `mise install` — Go, Node, pnpm, buf and golangci-lint at the versions
-  `aldine/mise.toml` pins. Homebrew installs none of these.
-- `brew shellenv` added to `~/.zprofile` and `mise activate` to `~/.zshrc`, so
-  SSH sessions and the login shell of the Aldine launchd agent get the tools
+A customer box has no clone of aldine, no toolchain, no mise and no deploy key. A deploy copies a release of `box-server` to it over SSH.
 
-A dev box also runs `mise run setup`: pnpm dependencies and the Playwright
-browser. Verify a dev box with
-`cd ~/git/cowlabs/aldine && mise run build && mise run test`.
+The dev box builds, tests and runs the CI of aldine, so it keeps a clone at `~/git/cowlabs/aldine`:
+
+- a deploy key for the clone. See [GitHub access](#github-access).
+- `mise install` and `mise run setup` — Go, Node, pnpm, buf and golangci-lint at the versions `aldine/mise.toml` pins, the pnpm dependencies and the Playwright browser. Homebrew installs mise only.
+- `mise activate` added to `~/.zshrc`, so SSH sessions and the CI runner get the tools
+
+Both roles add `brew shellenv` to `~/.zprofile`, so SSH sessions get the Homebrew tools. Verify a dev box with `cd ~/git/cowlabs/aldine && mise run build && mise run test`.
+
+## Aldine settings
+
+`setup.sh` writes the settings of `box-server` to `~/.config/aldine/box.env`, on both roles. The launchd agent `ai.aldine.box-server`, which a deploy installs, reads the file with `sh` each time it starts `box-server`.
+
+- Each line is `KEY=value`. A value with a space, such as the backup folder, is in single quotes.
+- The file has mode 600, as it holds the logo.dev key. Never put the file or a key in this repo.
+- A re-run writes the settings below again. It keeps any other line that sets a variable, such as `ALDINE_LOG_LEVEL=debug`.
+- When a re-run changes the file, it restarts `ai.aldine.box-server` if the agent runs, so the new settings apply. The box finishes the running job first.
+
+| Setting | Customer box | Dev box |
+| --- | --- | --- |
+| `ALDINE_BOX_ID` | the box name, such as `acme-1` | `dev-box` |
+| `ALDINE_DEPLOY_MODE` | not set, so the debug service is off | `dev`, which turns on the debug service |
+| `ALDINE_ADDR` | `127.0.0.1:5173` | `127.0.0.1:5173` |
+| `ALDINE_DATA_DIR` | `$HOME/aldine`, as an absolute path | the same, or the value in `mise.local.toml` |
+| `ALDINE_BACKUP_DIR` | `/Volumes/Aldine Backups`, when the box has a backup drive | the same |
+| `ALDINE_LOGO_DEV_SECRET_KEY` | the logo.dev key, when you give one | the value in `mise.local.toml`, when set |
+| `ALDINE_LOG_FORMAT` | `console` | `console` |
+
+`setup.sh` also makes the data folder, as `box-server` does not.
+
+Boxes set up before box.env kept their settings in aldine's `mise.local.toml`. `setup.sh` reads the logo.dev key and the backup folder from it, when box.env does not have them. The dev box keeps its `mise.local.toml` for the aldine tasks, such as the SSH host of the dev box. A customer box set up before keeps its clone and its deploy key. Delete both after the first deploy of a release: `rm -rf ~/git/cowlabs/aldine ~/.ssh/aldine_deploy*`, the `github.com-aldine` host in `~/.ssh/config`, and the deploy key on GitHub.
 
 `mise` also wraps this repo's own scripts, so both are driven the same way:
 `mise run setup`, `mise run update` and `mise run update-macos`.
@@ -81,7 +102,6 @@ at the start, then runs to the end with no other prompt:
   tailnet yet.
 - the backup drive and the passphrase of its volume. See
   [Backup drive](#backup-drive).
-- the deploy key: `setup.sh` prints it, and waits until you add it to aldine.
 
 A re-run asks only for what is not set up yet.
 
@@ -94,15 +114,10 @@ A re-run asks only for what is not set up yet.
 - turns off automatic macOS updates and security responses, as both can
   restart the box. With FileVault on, a restart nobody expects leaves the box
   down until someone types the password. Apply updates by hand.
-- clones aldine with a read-only deploy key
 - sets up the backup drive
-- writes `~/git/cowlabs/aldine/mise.local.toml` with `ALDINE_BOX_ID`, the
-  logo.dev key and `ALDINE_BACKUP_DIR`. A box with its own id has no debug
-  service. A re-run writes the file again.
+- writes `~/.config/aldine/box.env` with the box name as `ALDINE_BOX_ID`, the logo.dev key and `ALDINE_BACKUP_DIR`. A customer box has no debug service. See [Aldine settings](#aldine-settings).
 
-It ends with a check of each of these, of the backup volume, and of FileVault
-and Ollama. A failed check exits with an error: fix it, and run `./setup.sh`
-again.
+It ends with a check of each of these, of the backup volume, and of FileVault and Ollama. A failed check exits with an error: fix it, and run `./setup.sh` again. Then deploy a release to the box from your laptop, with `mise run box:deploy <tag> --box aldine@<box name>` in aldine.
 
 Before `setup.sh`, at the machine: create the `aldine` admin account, and turn
 on FileVault. Neither can be done from a script. `setup.sh` stops at the start
@@ -126,14 +141,10 @@ drive, so the dev box backs up the same way as a customer box.
   `ai.aldine.backup-volume`, unlocks and mounts the volume at login
   and every 5 minutes, so a drive that is plugged in again comes back. It logs
   to `~/Library/Logs/ai.aldine.backup-volume.log`.
-- `ALDINE_BACKUP_DIR` in aldine's `mise.local.toml` turns backups on. On a dev
-  box, `setup.sh` adds it to the file with `mise set`. It applies at the next
-  deploy.
+- `ALDINE_BACKUP_DIR` in `~/.config/aldine/box.env` turns backups on, on both roles. `setup.sh` writes it. See [Aldine settings](#aldine-settings).
 - Spotlight does not index the volume.
 
-On a new Mac with a drive that holds backups, `setup.sh` finds the volume, and
-asks for its passphrase from 1Password. Then deploy, and restore with
-`mise run box:restore` in aldine.
+On a new Mac with a drive that holds backups, `setup.sh` finds the volume, and asks for its passphrase from 1Password. Then deploy a release, and restore with `mise run box:restore` in aldine.
 
 ## GitHub access
 
@@ -142,13 +153,9 @@ would grant one: OAuth scopes such as `repo` cover every repository the account
 can reach, and they cannot be narrowed to one repo. `gh` is therefore not
 installed. Run it from your laptop.
 
-Instead `setup.sh` generates a **deploy key** per machine, at
-`~/.ssh/aldine_deploy`, and prints the public half for you to add at
-[aldine → Settings → Deploy keys](https://github.com/cowlabs-xyz/aldine/settings/keys/new).
-On a dev box, allow write access so the machine can push. On a customer box,
-leave it off: the box only pulls. The key reaches that one repository
-and nothing else, and you revoke it per machine from that same page. A deploy
-key must be unique across GitHub, so each machine needs its own.
+A customer box needs no GitHub access: it has no clone, and a deploy copies a release to it from your laptop.
+
+On a dev box, `setup.sh` generates a **deploy key**, at `~/.ssh/aldine_deploy`, and prints the public half for you to add at [aldine → Settings → Deploy keys](https://github.com/cowlabs-xyz/aldine/settings/keys/new). Allow write access, so the machine can push. The key reaches that one repository and nothing else, and you revoke it from that same page. A deploy key must be unique across GitHub, so each machine needs its own.
 
 The key sits behind an SSH host alias, so it never competes with a forwarded
 agent:
