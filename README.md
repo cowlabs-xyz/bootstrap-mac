@@ -120,9 +120,9 @@ drive, so the dev box backs up the same way as a customer box.
   its own. Make it in 1Password first, titled `<box name> backup drive`, then
   paste it. Give a copy to the customer, as with the FileVault recovery key.
 - The login keychain holds the passphrase. A launchd user agent,
-  `xyz.cowlabs.aldine.backup-volume`, unlocks and mounts the volume at login
+  `ai.aldine.backup-volume`, unlocks and mounts the volume at login
   and every 5 minutes, so a drive that is plugged in again comes back. It logs
-  to `~/Library/Logs/xyz.cowlabs.aldine.backup-volume.log`.
+  to `~/Library/Logs/ai.aldine.backup-volume.log`.
 - `ALDINE_BACKUP_DIR` in aldine's `mise.local.toml` turns backups on. On a dev
   box, `setup.sh` adds it to the file with `mise set`. It applies at the next
   deploy.
@@ -258,10 +258,10 @@ The release tarball ships the library. It is not the Mac app either, nor
 sends a device ID. `setup.sh` removes the formula from a machine that still has
 it, and keeps the models in `~/.ollama`.
 
-A launchd user agent, `xyz.cowlabs.ollama`, runs `ollama serve`. It starts at
+A launchd user agent, `ai.aldine.ollama`, runs `ollama serve`. It starts at
 login and restarts after a crash. It listens on `127.0.0.1:11434` only, with
 `OLLAMA_FLASH_ATTENTION=1` and `OLLAMA_KV_CACHE_TYPE=q8_0`, as the Homebrew
-service did. It logs to `~/Library/Logs/xyz.cowlabs.ollama.log`.
+service did. It logs to `~/Library/Logs/ai.aldine.ollama.log`.
 
 `setup.sh` turns off Ollama's cloud features with
 `{"disable_ollama_cloud": true}` in `~/.ollama/server.json`. This stops remote

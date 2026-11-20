@@ -104,8 +104,8 @@ fi
 # agent unlocks the volume after a restart. 1Password and the office keep it too.
 BACKUP_VOLUME="Aldine Backups"
 BACKUP_DIR="/Volumes/$BACKUP_VOLUME"
-BACKUP_SERVICE="xyz.cowlabs.aldine.backup-volume"
-BACKUP_LABEL="xyz.cowlabs.aldine.backup-volume"
+BACKUP_SERVICE="ai.aldine.backup-volume"
+BACKUP_LABEL="ai.aldine.backup-volume"
 BACKUP_PLIST="$HOME/Library/LaunchAgents/$BACKUP_LABEL.plist"
 BACKUP_CONTAINER=""
 BACKUP_PASSPHRASE=""
@@ -308,7 +308,7 @@ if ! spctl --status 2>/dev/null | grep -q "enabled"; then
   echo "    WARNING: Gatekeeper is disabled"
 fi
 # SSH: uncomment to require key auth once authorized_keys are deployed
-# sudo tee /etc/ssh/sshd_config.d/100-cowlabs.conf >/dev/null <<'SSH'
+# sudo tee /etc/ssh/sshd_config.d/100-aldine.conf >/dev/null <<'SSH'
 # PasswordAuthentication no
 # KbdInteractiveAuthentication no
 # SSH
@@ -401,7 +401,7 @@ echo "==> Ollama"
 OLLAMA_VERSION="0.40.6"
 OLLAMA_ROOT="$HOME/.local/ollama"
 OLLAMA_DIR="$OLLAMA_ROOT/$OLLAMA_VERSION"
-OLLAMA_LABEL="xyz.cowlabs.ollama"
+OLLAMA_LABEL="ai.aldine.ollama"
 OLLAMA_PLIST="$HOME/Library/LaunchAgents/$OLLAMA_LABEL.plist"
 OLLAMA_DOMAIN="gui/$(id -u)"
 
@@ -426,6 +426,11 @@ fi
 # The CLI on PATH. Ollama follows the link to find its libraries.
 sudo mkdir -p /usr/local/bin
 sudo ln -sfn "$OLLAMA_DIR/ollama" /usr/local/bin/ollama
+
+# Earlier versions of this script ran Ollama under the agent xyz.cowlabs.ollama.
+# Remove it, so it does not hold the port of the agent below. Its log stays.
+launchctl bootout "$OLLAMA_DOMAIN/xyz.cowlabs.ollama" 2>/dev/null || true
+rm -f "$HOME/Library/LaunchAgents/xyz.cowlabs.ollama.plist"
 
 # Earlier versions of this script ran the formula as a Homebrew service. Stop
 # and remove it. The models in ~/.ollama stay, so nothing downloads again.
