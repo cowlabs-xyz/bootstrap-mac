@@ -118,11 +118,14 @@ backup_volume_uuid() {
 }
 
 # Each APFS container on an external disk, as "<container> <free bytes> <volumes>".
+# A disk image, such as an Xcode simulator runtime, is not internal either, so it
+# is left out by its bus protocol.
 backup_containers() {
   diskutil apfs list -plist | plutil -convert json -o - - |
     jq -r '.Containers[] | [.ContainerReference, .DesignatedPhysicalStore, .CapacityFree, ([.Volumes[].Name] | join(", "))] | @tsv' |
     while IFS=$'\t' read -r container store free names; do
-      if [ "$(diskutil info -plist "$store" | plutil -extract Internal raw - 2>/dev/null)" = "false" ]; then
+      if diskutil info -plist "$store" | plutil -convert json -o - - |
+        jq -e '.Internal == false and .BusProtocol != "Disk Image"' >/dev/null; then
         printf '%s\t%s\t%s\n' "$container" "$free" "$names"
       fi
     done
