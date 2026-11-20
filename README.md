@@ -40,7 +40,7 @@ unless you pass `--macos`, which reboots.
 
 - `bootstrap.sh` — curl-able entry point (Homebrew + clone + hand-off)
 - `update.sh` — routine updates: this repo, Homebrew, the toolchain, macOS
-- `setup.sh` — main setup: `brew bundle`, macOS defaults, security lockdown,
+- `setup.sh` — main setup: `brew bundle`, macOS defaults, security lockdown, Siri, analytics, AirDrop and Handoff off, the bundled App Store apps removed,
   headless server behaviour, Remote Login (SSH), Tailscale, Ollama
 - `Brewfile` — packages for all machines
 - `Brewfile.dev` — development toolchain, dev role only
