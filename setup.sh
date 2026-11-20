@@ -267,7 +267,14 @@ done
 
 
 echo "==> Installing packages from Brewfile"
-brew bundle --file Brewfile
+# A customer box upgrades packages only through update.sh, by hand, outside
+# office hours. A re-run of setup.sh there installs what is missing, and
+# upgrades nothing.
+if [ "$ROLE" = "prod" ]; then
+  HOMEBREW_BUNDLE_NO_UPGRADE=1 brew bundle --file Brewfile
+else
+  brew bundle --file Brewfile
+fi
 if [ "$ROLE" = "dev" ]; then
   brew bundle --file Brewfile.dev
 fi
@@ -393,6 +400,50 @@ else
 fi
 # Let this user run tailscale without sudo
 sudo tailscale set --operator="$USER" || true
+
+# A watchdog loads tailscaled again when anything unloads it, such as
+# `brew services stop`, or a `brew services restart` that a dropped Tailscale
+# SSH session cut halfway. launchd's KeepAlive restarts a tailscaled that exits,
+# but not one that is unloaded. Without the watchdog, the box stays off the
+# tailnet until someone reaches it on the office network. It runs every 2
+# minutes, and logs only when it acts.
+TS_LABEL="sh.brew.tailscale"
+TS_WATCHDOG_LABEL="ai.aldine.tailscale-watchdog"
+TS_WATCHDOG_PLIST="/Library/LaunchDaemons/$TS_WATCHDOG_LABEL.plist"
+TS_WATCHDOG_WANT="$(cat <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Written by bootstrap-mac setup.sh. Edits are overwritten. -->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>$TS_WATCHDOG_LABEL</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/sh</string>
+    <string>-c</string>
+    <string>launchctl print system/$TS_LABEL &gt;/dev/null 2&gt;&amp;1 &amp;&amp; exit 0; plist=/Library/LaunchDaemons/$TS_LABEL.plist; if [ ! -f "\$plist" ]; then cp /opt/homebrew/opt/tailscale/$TS_LABEL.plist "\$plist" &amp;&amp; chown root:wheel "\$plist" &amp;&amp; chmod 644 "\$plist"; fi; launchctl bootstrap system "\$plist" &amp;&amp; echo "\$(date): tailscaled was not loaded, loaded it again"</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>StartInterval</key>
+  <integer>120</integer>
+  <key>StandardOutPath</key>
+  <string>/var/log/$TS_WATCHDOG_LABEL.log</string>
+  <key>StandardErrorPath</key>
+  <string>/var/log/$TS_WATCHDOG_LABEL.log</string>
+</dict>
+</plist>
+EOF
+)"
+if [ "$(sudo cat "$TS_WATCHDOG_PLIST" 2>/dev/null)" != "$TS_WATCHDOG_WANT" ]; then
+  echo "$TS_WATCHDOG_WANT" | sudo tee "$TS_WATCHDOG_PLIST" >/dev/null
+  sudo chown root:wheel "$TS_WATCHDOG_PLIST"
+  sudo chmod 644 "$TS_WATCHDOG_PLIST"
+  sudo launchctl bootout "system/$TS_WATCHDOG_LABEL" 2>/dev/null || true
+fi
+sudo launchctl bootstrap system "$TS_WATCHDOG_PLIST" 2>/dev/null || true
+echo "    the watchdog loads tailscaled again within 2 minutes if anything unloads it"
 
 echo "==> Ollama"
 # The official release build, run by our own launchd agent. Not the Homebrew
@@ -665,6 +716,7 @@ if [ "$ROLE" = "prod" ]; then
     fi
   }
   check "hostname is $BOX_NAME" '[ "$(scutil --get HostName)" = "$BOX_NAME" ]'
+  check "Tailscale comes back by itself when something unloads it" 'sudo launchctl print "system/$TS_WATCHDOG_LABEL"'
   check "Tailscale machine name is $BOX_NAME" 'tailscale status --json --peers=false | grep -q "\"DNSName\": \"$BOX_NAME\."'
   check "FileVault is on" 'fdesetup status | grep -q "FileVault is On"'
   check "macOS updates do not install by themselves" '[ "$(defaults read /Library/Preferences/com.apple.SoftwareUpdate AutomaticallyInstallMacOSUpdates)" = 0 ] && [ "$(defaults read /Library/Preferences/com.apple.SoftwareUpdate CriticalUpdateInstall)" = 0 ]'
