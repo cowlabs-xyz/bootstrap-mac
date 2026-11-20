@@ -302,6 +302,23 @@ Ollama reads the file the same way as `OLLAMA_NO_CLOUD=1`.
 `ops/box/ollama.json` together, then run `./setup.sh` on the machine. It
 installs the new version, restarts the agent, and removes the old version.
 
+## Aldine app icon
+
+`setup.sh` builds `/Applications/Aldine.app`, which opens Aldine in Chrome. Its icon follows the macOS icon style: default, dark, clear and tinted.
+
+- `assets/aldine-icon/Aldine.icon` is the source, in the format of Icon Composer. The background is Forest `#2a3b2b`, or `#181715` in dark mode. The mark is Sage `#aac2af`.
+- `assets/aldine-icon/Assets.car` and `Aldine.icns` are compiled from it. `setup.sh` copies them into the app.
+
+To change the icon, edit the source in Icon Composer or by hand, then compile it on a Mac with Xcode, such as the dev box:
+
+```bash
+cd assets/aldine-icon && mkdir -p out
+/Applications/Xcode.app/Contents/Developer/usr/bin/actool Aldine.icon --compile out \
+  --platform macosx --minimum-deployment-target 26.0 --app-icon Aldine \
+  --output-partial-info-plist out/partial.plist
+mv out/Assets.car out/Aldine.icns . && rm -r out
+```
+
 ## Manual steps after setup on a dev box
 
 - Set a hostname with `sudo scutil --set ComputerName/HostName/LocalHostName`
