@@ -317,6 +317,35 @@ fi
 if ! spctl --status 2>/dev/null | grep -q "enabled"; then
   echo "    WARNING: Gatekeeper is disabled"
 fi
+
+echo "==> macOS services and apps"
+# A box serves Aldine only. Turn off the services that send data to Apple or
+# talk to devices nearby. Some apply only after the next login.
+# Siri, and Siri data sharing
+defaults write com.apple.assistant.support "Assistant Enabled" -bool false
+defaults write com.apple.assistant.support "Siri Data Sharing Opt-In Status" -int 2
+defaults write com.apple.Siri StatusMenuVisible -bool false
+defaults write com.apple.Siri VoiceTriggerUserEnabled -bool false
+# Analytics and crash reports to Apple and to app developers
+DIAG_PLIST="/Library/Application Support/CrashReporter/DiagnosticMessagesHistory.plist"
+sudo defaults write "$DIAG_PLIST" AutoSubmit -bool false
+sudo defaults write "$DIAG_PLIST" ThirdPartyDataSubmit -bool false
+# AirDrop and Handoff
+defaults write com.apple.NetworkBrowser DisableAirDrop -bool true
+defaults -currentHost write com.apple.coreservices.useractivityd ActivityAdvertisingAllowed -bool false
+defaults -currentHost write com.apple.coreservices.useractivityd ActivityReceivingAllowed -bool false
+# The App Store apps that come with a Mac. The apps on the system volume
+# (Music, News, Safari and so on) are read-only and stay.
+REMOVED_APPS=(GarageBand iMovie Keynote Numbers Pages)
+for app in "${REMOVED_APPS[@]}"; do
+  if [ -d "/Applications/$app.app" ]; then
+    echo "    removing $app"
+    sudo rm -rf "/Applications/$app.app"
+  fi
+done
+if defaults read MobileMeAccounts Accounts 2>/dev/null | grep -q AccountID; then
+  echo "    WARNING: this Mac is signed in to an Apple ID. Sign out in System Settings."
+fi
 # SSH: uncomment to require key auth once authorized_keys are deployed
 # sudo tee /etc/ssh/sshd_config.d/100-aldine.conf >/dev/null <<'SSH'
 # PasswordAuthentication no
@@ -732,6 +761,11 @@ if [ "$ROLE" = "prod" ]; then
   check "Tailscale machine name is $BOX_NAME" 'tailscale status --json --peers=false | grep -q "\"DNSName\": \"$BOX_NAME\."'
   check "FileVault is on" 'fdesetup status | grep -q "FileVault is On"'
   check "macOS updates do not install by themselves" '[ "$(defaults read /Library/Preferences/com.apple.SoftwareUpdate AutomaticallyInstallMacOSUpdates)" = 0 ] && [ "$(defaults read /Library/Preferences/com.apple.SoftwareUpdate CriticalUpdateInstall)" = 0 ]'
+  check "Siri is off" '[ "$(defaults read com.apple.assistant.support "Assistant Enabled")" = 0 ]'
+  check "the Mac sends no analytics or crash reports" '[ "$(defaults read "$DIAG_PLIST" AutoSubmit)" = 0 ] && [ "$(defaults read "$DIAG_PLIST" ThirdPartyDataSubmit)" = 0 ]'
+  check "AirDrop and Handoff are off" '[ "$(defaults read com.apple.NetworkBrowser DisableAirDrop)" = 1 ] && [ "$(defaults -currentHost read com.apple.coreservices.useractivityd ActivityAdvertisingAllowed)" = 0 ]'
+  check "GarageBand, iMovie, Keynote, Numbers and Pages are removed" 'for app in "${REMOVED_APPS[@]}"; do [ ! -d "/Applications/$app.app" ] || exit 1; done'
+  check "no Apple ID is signed in" '! defaults read MobileMeAccounts Accounts 2>/dev/null | grep -q AccountID'
   check "the deploy key reaches aldine" 'deploy_key_ready'
   check "aldine is cloned" '[ -d "$ALDINE_DIR/.git" ]'
   check "the box id is $BOX_NAME" 'grep -qxF "ALDINE_BOX_ID = \"$BOX_NAME\"" "$ALDINE_LOCAL"'
