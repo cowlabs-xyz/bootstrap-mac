@@ -307,7 +307,7 @@ Ollama reads the file the same way as `OLLAMA_NO_CLOUD=1`.
 
 `update.sh` does not touch Ollama. To change the version, change
 `OLLAMA_VERSION` in `setup.sh` and the version in aldine's
-`ops/box/ollama.json` together, then run `./setup.sh` on the machine. It
+`box-server/ollama.json` together, then run `./setup.sh` on the machine. It
 installs the new version, restarts the agent, and removes the old version.
 
 ## Log rotation

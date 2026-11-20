@@ -644,7 +644,7 @@ echo "==> Ollama"
 # formula: Homebrew builds with no network, so it lacks libollama_xgrammar.dylib,
 # and models that run on MLX then refuse structured output (HTTP 501). Not the
 # Mac app either: it checks for updates every hour and sends a device ID.
-# The version is pinned. Change it here and in aldine's ops/box/ollama.json
+# The version is pinned. Change it here and in aldine's box-server/ollama.json
 # together; a re-run of setup.sh installs it and removes the old one.
 OLLAMA_VERSION="0.40.6"
 OLLAMA_ROOT="$HOME/.local/ollama"
