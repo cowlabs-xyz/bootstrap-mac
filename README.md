@@ -209,6 +209,30 @@ connects at boot with no login session. This is the open source `tailscale`
 formula rather than the GUI cask, because only that variant serves Tailscale SSH
 on macOS.
 
+### Tailscale comes back by itself
+
+A box that drops off the tailnet is out of reach until someone is at its office.
+A root launchd daemon, `ai.aldine.tailscale-watchdog`, checks every 2 minutes
+that `tailscaled` is loaded, and loads it again if not. It logs to
+`/var/log/ai.aldine.tailscale-watchdog.log`, only when it acts. launchd's
+`KeepAlive` already restarts a `tailscaled` that exits. The watchdog covers one
+that is unloaded, such as by `brew services stop`.
+
+**Never run `brew services restart tailscale` over Tailscale SSH.** It stops the
+daemon, which ends the session, and the start never runs. Restart it through
+launchd instead, which does the restart itself:
+
+```bash
+sudo launchctl kickstart -k system/sh.brew.tailscale
+```
+
+The session drops for a few seconds. `update.sh` restarts it this way, as its
+last step. To stop Tailscale on purpose, unload the watchdog first:
+`sudo launchctl bootout system/ai.aldine.tailscale-watchdog`.
+
+A customer box upgrades packages only through `update.sh`, by hand. A re-run of
+`setup.sh` there installs what is missing, and upgrades nothing.
+
 ### Tailscale SSH
 
 `setup.sh` runs `tailscale up --ssh`, so SSH access is granted by the tailnet
