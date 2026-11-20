@@ -272,6 +272,7 @@ echo "==> Installing packages from Brewfile"
 # upgrades nothing.
 if [ "$ROLE" = "prod" ]; then
   HOMEBREW_BUNDLE_NO_UPGRADE=1 brew bundle --file Brewfile
+  HOMEBREW_BUNDLE_NO_UPGRADE=1 brew bundle --file Brewfile.prod
 else
   brew bundle --file Brewfile
 fi
@@ -351,6 +352,59 @@ fi
 # PasswordAuthentication no
 # KbdInteractiveAuthentication no
 # SSH
+
+if [ "$ROLE" = "prod" ]; then
+  echo "==> Chrome"
+  # Staff open Aldine on the box in Chrome, not Safari. Aldine is the start
+  # page, the home page and a bookmark. Chrome reads the initial preferences
+  # when it makes a new profile only, so a profile made before this step keeps
+  # its own settings.
+  ALDINE_URL="http://localhost:5173"
+  CHROME_SUPPORT="/Library/Application Support/Google/Chrome"
+  CHROME_INITIAL="$CHROME_SUPPORT/Google Chrome Initial Preferences"
+  CHROME_BOOKMARKS="$CHROME_SUPPORT/aldine-bookmarks.html"
+  sudo mkdir -p "$CHROME_SUPPORT"
+  sudo tee "$CHROME_BOOKMARKS" >/dev/null <<BOOKMARKS
+<!DOCTYPE NETSCAPE-Bookmark-file-1>
+<META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=UTF-8">
+<TITLE>Bookmarks</TITLE>
+<H1>Bookmarks</H1>
+<DL><p>
+    <DT><H3 PERSONAL_TOOLBAR_FOLDER="true">Bookmarks bar</H3>
+    <DL><p>
+        <DT><A HREF="$ALDINE_URL/">Aldine</A>
+    </DL><p>
+</DL><p>
+BOOKMARKS
+  sudo tee "$CHROME_INITIAL" >/dev/null <<PREFS
+{
+  "homepage": "$ALDINE_URL/",
+  "homepage_is_newtabpage": false,
+  "browser": { "show_home_button": true },
+  "session": { "restore_on_startup": 4, "startup_urls": ["$ALDINE_URL/"] },
+  "bookmark_bar": { "show_on_all_tabs": true },
+  "sync_promo": { "show_on_first_run_allowed": false },
+  "first_run_tabs": ["$ALDINE_URL/"],
+  "distribution": {
+    "skip_first_run_ui": true,
+    "import_bookmarks": false,
+    "import_bookmarks_from_file": "$CHROME_BOOKMARKS",
+    "make_chrome_default_for_user": true,
+    "suppress_first_run_default_browser_prompt": false
+  }
+}
+PREFS
+  # No Google profile: no sign-in, no sync, no new profiles, no guest mode.
+  defaults write com.google.Chrome BrowserSignin -int 0
+  defaults write com.google.Chrome SyncDisabled -bool true
+  defaults write com.google.Chrome BrowserAddPersonEnabled -bool false
+  defaults write com.google.Chrome BrowserGuestModeEnabled -bool false
+  # macOS asks a person to confirm a new default browser.
+  if ! defaults read com.apple.LaunchServices/com.apple.launchservices.secure LSHandlers 2>/dev/null | grep -B1 "LSHandlerURLScheme = https;" | grep -q "com.google.chrome"; then
+    echo "    Make Chrome the default browser: open Chrome, and confirm the macOS prompt."
+    echo "    Or: System Settings > Desktop & Dock > Default web browser."
+  fi
+fi
 
 echo "==> Server behaviour (headless)"
 # Never sleep; restart automatically after power failure or freeze
@@ -766,6 +820,9 @@ if [ "$ROLE" = "prod" ]; then
   check "AirDrop and Handoff are off" '[ "$(defaults read com.apple.NetworkBrowser DisableAirDrop)" = 1 ] && [ "$(defaults -currentHost read com.apple.coreservices.useractivityd ActivityAdvertisingAllowed)" = 0 ]'
   check "GarageBand, iMovie, Keynote, Numbers and Pages are removed" 'for app in "${REMOVED_APPS[@]}"; do [ ! -d "/Applications/$app.app" ] || exit 1; done'
   check "no Apple ID is signed in" '! defaults read MobileMeAccounts Accounts 2>/dev/null | grep -q AccountID'
+  check "Chrome is installed" '[ -d "/Applications/Google Chrome.app" ]'
+  check "Chrome opens Aldine and blocks sign-in" '[ -f "$CHROME_INITIAL" ] && [ -f "$CHROME_BOOKMARKS" ] && [ "$(defaults read com.google.Chrome BrowserSignin)" = 0 ]'
+  check "Chrome is the default browser" 'defaults read com.apple.LaunchServices/com.apple.launchservices.secure LSHandlers | grep -B1 "LSHandlerURLScheme = https;" | grep -q com.google.chrome'
   check "the deploy key reaches aldine" 'deploy_key_ready'
   check "aldine is cloned" '[ -d "$ALDINE_DIR/.git" ]'
   check "the box id is $BOX_NAME" 'grep -qxF "ALDINE_BOX_ID = \"$BOX_NAME\"" "$ALDINE_LOCAL"'
