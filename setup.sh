@@ -406,6 +406,38 @@ PREFS
   fi
 fi
 
+if [ "$ROLE" = "prod" ]; then
+  echo "==> Dock, desktop picture and user picture"
+  # The Dock holds Chrome and System Settings, after Finder, which is always
+  # first. A re-run sets it again.
+  dock_tile() {
+    echo "<dict><key>tile-data</key><dict><key>file-data</key><dict><key>_CFURLString</key><string>$1</string><key>_CFURLStringType</key><integer>0</integer></dict></dict></dict>"
+  }
+  defaults write com.apple.dock persistent-apps -array \
+    "$(dock_tile "/Applications/Google Chrome.app")" \
+    "$(dock_tile "/System/Applications/System Settings.app")"
+  defaults write com.apple.dock persistent-others -array
+  defaults write com.apple.dock show-recents -bool false
+  killall Dock &>/dev/null || true
+
+  # The images live in this repo, in assets/. Copy them to where macOS keeps
+  # its own, so a pull of this repo does not change them under the box.
+  WALLPAPER="/Library/Desktop Pictures/Aldine.png"
+  USER_PICTURE="/Library/User Pictures/Aldine.png"
+  sudo cp assets/wallpaper.png "$WALLPAPER"
+  sudo mkdir -p "/Library/User Pictures"
+  sudo cp assets/user-picture.png "$USER_PICTURE"
+  # macOS shows JPEGPhoto before Picture, so delete it.
+  sudo dscl . -delete "/Users/$USER" JPEGPhoto &>/dev/null || true
+  sudo dscl . -create "/Users/$USER" Picture "$USER_PICTURE"
+  # Setting the desktop picture needs a logged-in session, and macOS can ask
+  # once to let this terminal control System Events.
+  if ! osascript -e "tell application \"System Events\" to tell every desktop to set picture to POSIX file \"$WALLPAPER\"" &>/dev/null; then
+    echo "    Could not set the desktop picture. Log in at the box and run ./setup.sh"
+    echo "    there, or pick $WALLPAPER in System Settings > Wallpaper."
+  fi
+fi
+
 echo "==> Server behaviour (headless)"
 # Never sleep; restart automatically after power failure or freeze
 sudo pmset -a sleep 0 disksleep 0 displaysleep 10 autorestart 1 womp 1
@@ -823,6 +855,8 @@ if [ "$ROLE" = "prod" ]; then
   check "Chrome is installed" '[ -d "/Applications/Google Chrome.app" ]'
   check "Chrome opens Aldine and blocks sign-in" '[ -f "$CHROME_INITIAL" ] && [ -f "$CHROME_BOOKMARKS" ] && [ "$(defaults read com.google.Chrome BrowserSignin)" = 0 ]'
   check "Chrome is the default browser" 'defaults read com.apple.LaunchServices/com.apple.launchservices.secure LSHandlers | grep -B1 "LSHandlerURLScheme = https;" | grep -q com.google.chrome'
+  check "the Dock holds Chrome and System Settings" 'defaults read com.apple.dock persistent-apps | grep -q "Google Chrome.app" && ! defaults read com.apple.dock persistent-apps | grep -q "Safari.app"'
+  check "the user picture is the Aldine mark" '[ "$(dscl . -read "/Users/$USER" Picture | sed "s/^Picture: //")" = "$USER_PICTURE" ]'
   check "the deploy key reaches aldine" 'deploy_key_ready'
   check "aldine is cloned" '[ -d "$ALDINE_DIR/.git" ]'
   check "the box id is $BOX_NAME" 'grep -qxF "ALDINE_BOX_ID = \"$BOX_NAME\"" "$ALDINE_LOCAL"'
