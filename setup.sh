@@ -318,6 +318,11 @@ fi
 if ! spctl --status 2>/dev/null | grep -q "enabled"; then
   echo "    WARNING: Gatekeeper is disabled"
 fi
+# SSH: uncomment to require key auth once authorized_keys are deployed
+# sudo tee /etc/ssh/sshd_config.d/100-aldine.conf >/dev/null <<'SSH'
+# PasswordAuthentication no
+# KbdInteractiveAuthentication no
+# SSH
 
 echo "==> macOS services and apps"
 # A box serves Aldine only. Turn off the services that send data to Apple or
@@ -347,11 +352,6 @@ done
 if defaults read MobileMeAccounts Accounts 2>/dev/null | grep -q AccountID; then
   echo "    WARNING: this Mac is signed in to an Apple ID. Sign out in System Settings."
 fi
-# SSH: uncomment to require key auth once authorized_keys are deployed
-# sudo tee /etc/ssh/sshd_config.d/100-aldine.conf >/dev/null <<'SSH'
-# PasswordAuthentication no
-# KbdInteractiveAuthentication no
-# SSH
 
 if [ "$ROLE" = "prod" ]; then
   echo "==> Chrome"
@@ -360,7 +360,7 @@ if [ "$ROLE" = "prod" ]; then
   # when it makes a new profile only, so a profile made before this step keeps
   # its own settings.
   ALDINE_URL="http://localhost:5173"
-  CHROME_SUPPORT="/Library/Application Support/Google/Chrome"
+  CHROME_SUPPORT="/Library/Google"
   CHROME_INITIAL="$CHROME_SUPPORT/Google Chrome Initial Preferences"
   CHROME_BOOKMARKS="$CHROME_SUPPORT/aldine-bookmarks.html"
   sudo mkdir -p "$CHROME_SUPPORT"
@@ -394,15 +394,26 @@ BOOKMARKS
   }
 }
 PREFS
-  # No Google profile: no sign-in, no sync, no new profiles, no guest mode.
-  defaults write com.google.Chrome BrowserSignin -int 0
-  defaults write com.google.Chrome SyncDisabled -bool true
-  defaults write com.google.Chrome BrowserAddPersonEnabled -bool false
-  defaults write com.google.Chrome BrowserGuestModeEnabled -bool false
-  # macOS asks a person to confirm a new default browser.
-  if ! defaults read com.apple.LaunchServices/com.apple.launchservices.secure LSHandlers 2>/dev/null | grep -B1 "LSHandlerURLScheme = https;" | grep -q "com.google.chrome"; then
-    echo "    Make Chrome the default browser: open Chrome, and confirm the macOS prompt."
-    echo "    Or: System Settings > Desktop & Dock > Default web browser."
+  # Chrome applies a policy only from a configuration profile, and macOS lets
+  # a person install a profile, not a script. So open it for them.
+  CHROME_PROFILE_ID="ai.aldine.chrome"
+  chrome_profile_installed() {
+    sudo profiles show -type configuration 2>/dev/null | grep -q "$CHROME_PROFILE_ID"
+  }
+  if ! chrome_profile_installed; then
+    open assets/chrome.mobileconfig || true
+    echo "    Install the Chrome profile: System Settings > General > Device Management,"
+    echo "    open \"Aldine: Chrome\", and click Install. Then run ./setup.sh again."
+  fi
+  # macOS asks a person to confirm a new default browser. Chrome asks on its
+  # first run, so open it.
+  chrome_is_default() {
+    defaults read com.apple.LaunchServices/com.apple.launchservices.secure LSHandlers 2>/dev/null | grep -B1 "LSHandlerURLScheme = https;" | grep -q "com.google.chrome"
+  }
+  if ! chrome_is_default; then
+    open -a "Google Chrome" || true
+    echo "    Make Chrome the default browser: confirm the macOS prompt, or pick it in"
+    echo "    System Settings > Desktop & Dock > Default web browser."
   fi
 fi
 
@@ -435,6 +446,18 @@ if [ "$ROLE" = "prod" ]; then
   if ! osascript -e "tell application \"System Events\" to tell every desktop to set picture to POSIX file \"$WALLPAPER\"" &>/dev/null; then
     echo "    Could not set the desktop picture. Log in at the box and run ./setup.sh"
     echo "    there, or pick $WALLPAPER in System Settings > Wallpaper."
+  fi
+fi
+
+if [ "$ROLE" = "prod" ]; then
+  echo "==> Screen lock"
+  # A person uses Aldine at the box, and the display sleeps after 10 minutes.
+  # Ask for the password 5 seconds after that, so nobody walking past reads
+  # the invoices. sysadminctl asks for the password of this user.
+  SCREEN_LOCK_STATUS="screenLock delay is 5 seconds"
+  if ! sysadminctl -screenLock status 2>&1 | grep -q "$SCREEN_LOCK_STATUS"; then
+    echo "    Type the macOS password of $USER to turn on the screen lock."
+    sysadminctl -screenLock 5 -password - || echo "    WARNING: the screen lock is not set"
   fi
 fi
 
@@ -850,13 +873,15 @@ if [ "$ROLE" = "prod" ]; then
   check "Siri is off" '[ "$(defaults read com.apple.assistant.support "Assistant Enabled")" = 0 ]'
   check "the Mac sends no analytics or crash reports" '[ "$(defaults read "$DIAG_PLIST" AutoSubmit)" = 0 ] && [ "$(defaults read "$DIAG_PLIST" ThirdPartyDataSubmit)" = 0 ]'
   check "AirDrop and Handoff are off" '[ "$(defaults read com.apple.NetworkBrowser DisableAirDrop)" = 1 ] && [ "$(defaults -currentHost read com.apple.coreservices.useractivityd ActivityAdvertisingAllowed)" = 0 ]'
-  check "GarageBand, iMovie, Keynote, Numbers and Pages are removed" 'for app in "${REMOVED_APPS[@]}"; do [ ! -d "/Applications/$app.app" ] || exit 1; done'
+  check "GarageBand, iMovie, Keynote, Numbers and Pages are removed" '( for app in "${REMOVED_APPS[@]}"; do [ ! -d "/Applications/$app.app" ] || exit 1; done )'
   check "no Apple ID is signed in" '! defaults read MobileMeAccounts Accounts 2>/dev/null | grep -q AccountID'
   check "Chrome is installed" '[ -d "/Applications/Google Chrome.app" ]'
-  check "Chrome opens Aldine and blocks sign-in" '[ -f "$CHROME_INITIAL" ] && [ -f "$CHROME_BOOKMARKS" ] && [ "$(defaults read com.google.Chrome BrowserSignin)" = 0 ]'
-  check "Chrome is the default browser" 'defaults read com.apple.LaunchServices/com.apple.launchservices.secure LSHandlers | grep -B1 "LSHandlerURLScheme = https;" | grep -q com.google.chrome'
+  check "Chrome opens Aldine" '[ -f "$CHROME_INITIAL" ] && [ -f "$CHROME_BOOKMARKS" ]'
+  check "the Chrome profile blocks sign-in and data to Google" 'chrome_profile_installed'
+  check "Chrome is the default browser" 'chrome_is_default'
   check "the Dock holds Chrome and System Settings" 'defaults read com.apple.dock persistent-apps | grep -q "Google Chrome.app" && ! defaults read com.apple.dock persistent-apps | grep -q "Safari.app"'
-  check "the user picture is the Aldine mark" '[ "$(dscl . -read "/Users/$USER" Picture | sed "s/^Picture: //")" = "$USER_PICTURE" ]'
+  check "the user picture is the Aldine mark" '[ "$(dscl . -read "/Users/$USER" Picture | tail -1 | sed "s/^Picture: //; s/^ //")" = "$USER_PICTURE" ]'
+  check "the screen locks 5 seconds after the display sleeps" 'sysadminctl -screenLock status 2>&1 | grep -q "$SCREEN_LOCK_STATUS"'
   check "the deploy key reaches aldine" 'deploy_key_ready'
   check "aldine is cloned" '[ -d "$ALDINE_DIR/.git" ]'
   check "the box id is $BOX_NAME" 'grep -qxF "ALDINE_BOX_ID = \"$BOX_NAME\"" "$ALDINE_LOCAL"'

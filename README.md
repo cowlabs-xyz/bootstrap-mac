@@ -89,7 +89,8 @@ A re-run asks only for what is not set up yet.
 
 - sets the hostname and the Tailscale machine name to the box name
 - joins the office wifi
-- installs Google Chrome with Aldine as its start page and a bookmark, and blocks sign-in to a Google profile. macOS asks a person to confirm Chrome as the default browser.
+- installs Google Chrome with Aldine as its start page and a bookmark. A configuration profile, `assets/chrome.mobileconfig`, blocks sign-in to a Google profile, search suggestions and usage statistics. A person installs the profile in System Settings, and confirms Chrome as the default browser.
+- locks the screen 5 seconds after the display sleeps. It asks for the password of the box user.
 - sets the Dock to Chrome and System Settings, the desktop picture and the user picture to the Aldine mark in the brand colours. The images are in `assets/`. The desktop picture needs a logged-in session.
 - turns off automatic macOS updates and security responses, as both can
   restart the box. With FileVault on, a restart nobody expects leaves the box
