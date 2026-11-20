@@ -5,3 +5,6 @@ brew "git"
 brew "tailscale"
 # Installs the toolchain that aldine's mise.toml pins. A deploy runs it.
 brew "mise"
+# People open Aldine on a box in Chrome. setup.sh adds an Aldine app that
+# opens it, and on a customer box makes Aldine Chrome's start page.
+cask "google-chrome"
