@@ -98,8 +98,8 @@ A re-run asks only for what is not set up yet.
   service. A re-run writes the file again.
 
 It ends with a check of each of these, of the backup volume, and of FileVault
-and Ollama. A failed
-check exits with an error: fix it, and run `./setup.sh` again.
+and Ollama. A failed check exits with an error: fix it, and run `./setup.sh`
+again.
 
 Before `setup.sh`, at the machine: create the `aldine` admin account, and turn
 on FileVault. Neither can be done from a script. `setup.sh` stops at the start
@@ -114,7 +114,8 @@ drive, so the dev box backs up the same way as a customer box.
 - `setup.sh` lists the APFS containers on external disks, and asks which one
   is the backup drive. It adds an encrypted APFS volume, `Aldine Backups`, to
   it. What the drive holds already stays. A drive that is not APFS must be
-  erased as APFS first, in Disk Utility. Leave the choice empty to skip.
+  erased as APFS first, in Disk Utility. Leave the choice empty to skip. A
+  customer box needs its drive, so its final check then fails.
 - FileVault covers only the Mac's own disk, so the volume has a passphrase of
   its own. Make it in 1Password first, titled `<box name> backup drive`, then
   paste it. Give a copy to the customer, as with the FileVault recovery key.

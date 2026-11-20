@@ -128,12 +128,13 @@ backup_containers() {
     done
 }
 
-# Ask for the passphrase of the backup volume, twice.
+# Ask for the passphrase of the backup volume, twice. A new passphrase has 20
+# characters or more. An existing one is checked against the volume instead.
 read_backup_passphrase() {
   while :; do
     read -rsp "    $1: " BACKUP_PASSPHRASE
     echo
-    if [ "${#BACKUP_PASSPHRASE}" -lt 20 ]; then
+    if [ "$2" = new ] && [ "${#BACKUP_PASSPHRASE}" -lt 20 ]; then
       echo "    A passphrase has 20 characters or more."
       continue
     fi
@@ -151,7 +152,7 @@ if [ -n "$BACKUP_UUID" ]; then
   # A new Mac with a drive that holds backups: the passphrase is in 1Password.
   if ! security find-generic-password -s "$BACKUP_SERVICE" &>/dev/null; then
     until [ -n "$BACKUP_PASSPHRASE" ] && printf '%s' "$BACKUP_PASSPHRASE" | diskutil apfs unlockVolume "$BACKUP_UUID" -stdinpassphrase -verify &>/dev/null; do
-      read_backup_passphrase "Passphrase of $BACKUP_VOLUME, from 1Password"
+      read_backup_passphrase "Passphrase of $BACKUP_VOLUME, from 1Password" existing
     done
   fi
 else
@@ -180,14 +181,14 @@ else
     if [ -n "$BACKUP_CONTAINER" ]; then
       echo "    Make a passphrase in 1Password, titled \"${BOX_NAME:-$(hostname -s)} backup drive\"."
       echo "    Give a copy to the office, as with the FileVault recovery key."
-      read_backup_passphrase "Passphrase for $BACKUP_VOLUME"
+      read_backup_passphrase "Passphrase for $BACKUP_VOLUME" new
     fi
   fi
 fi
 
-# The passphrase goes in the login keychain, which a session over SSH can hold
+# The passphrase goes in the login keychain, which a session over SSH holds
 # locked. Unlock it now, while a person is at the keyboard.
-if [ -n "$BACKUP_PASSPHRASE" ] && ! security show-keychain-info "$HOME/Library/Keychains/login.keychain-db" &>/dev/null; then
+if [ -n "$BACKUP_PASSPHRASE" ] && { [ -n "${SSH_CONNECTION:-}" ] || ! security show-keychain-info "$HOME/Library/Keychains/login.keychain-db" &>/dev/null; }; then
   echo "    The login keychain is locked. Type the password of $USER to unlock it."
   security unlock-keychain "$HOME/Library/Keychains/login.keychain-db"
 fi
@@ -520,7 +521,10 @@ fi
 
 echo "==> Backup drive"
 if [ -n "$BACKUP_CONTAINER" ]; then
-  printf '%s' "$BACKUP_PASSPHRASE" | diskutil apfs addVolume "$BACKUP_CONTAINER" APFS "$BACKUP_VOLUME" -stdinpassphrase
+  if ! printf '%s' "$BACKUP_PASSPHRASE" | diskutil apfs addVolume "$BACKUP_CONTAINER" APFS "$BACKUP_VOLUME" -stdinpassphrase; then
+    echo "    FAILED to add $BACKUP_VOLUME to $BACKUP_CONTAINER. Check the drive in Disk Utility, and run ./setup.sh again." >&2
+    exit 1
+  fi
   BACKUP_UUID="$(backup_volume_uuid)"
 fi
 if [ -n "$BACKUP_PASSPHRASE" ]; then
@@ -600,6 +604,12 @@ fi
 # A customer box carries its own id, which also turns off the debug service.
 # This file belongs to setup.sh on a prod box: a re-run writes it again.
 if [ "$ROLE" = "prod" ]; then
+  # A re-run with the drive unplugged keeps the setting, so it does not turn
+  # backups off.
+  BACKUP_SET=false
+  if [ -n "$BACKUP_UUID" ] || grep -qxF "ALDINE_BACKUP_DIR = \"$BACKUP_DIR\"" "$ALDINE_LOCAL" 2>/dev/null; then
+    BACKUP_SET=true
+  fi
   ALDINE_LOCAL_WANT="$(cat <<EOF
 # Written by bootstrap-mac setup.sh. Edits are overwritten.
 [env]
@@ -610,7 +620,7 @@ EOF
     ALDINE_LOCAL_WANT="$ALDINE_LOCAL_WANT
 ALDINE_LOGO_DEV_SECRET_KEY = \"$LOGO_DEV_KEY\""
   fi
-  if [ -n "$BACKUP_UUID" ]; then
+  if [ "$BACKUP_SET" = true ]; then
     ALDINE_LOCAL_WANT="$ALDINE_LOCAL_WANT
 ALDINE_BACKUP_DIR = \"$BACKUP_DIR\""
   fi
@@ -659,11 +669,16 @@ if [ "$ROLE" = "prod" ]; then
     echo "    -       no logo.dev key: vendors show their initials"
   fi
   check "Ollama $OLLAMA_VERSION answers" 'curl -fsS http://127.0.0.1:11434/api/version | grep -q "\"$OLLAMA_VERSION\""'
-  check "the backup volume $BACKUP_VOLUME is encrypted" 'diskutil info "$BACKUP_DIR" | grep -qE "FileVault: +Yes"'
-  check "the backup volume is mounted and writable" 'touch "$BACKUP_DIR/.setup-check" && rm "$BACKUP_DIR/.setup-check"'
-  check "the keychain holds the passphrase of the backup volume" 'security find-generic-password -s "$BACKUP_SERVICE"'
-  check "the backup volume unlocks at login" 'launchctl print "gui/$(id -u)/$BACKUP_LABEL"'
-  check "the box backs up to $BACKUP_DIR" 'grep -qxF "ALDINE_BACKUP_DIR = \"$BACKUP_DIR\"" "$ALDINE_LOCAL"'
+  # A customer box holds the only copy of its data, so it needs its drive.
+  if [ -z "$BACKUP_UUID" ]; then
+    check "a backup drive with $BACKUP_VOLUME is plugged in" 'false'
+  else
+    check "the backup volume $BACKUP_VOLUME is encrypted" 'diskutil info "$BACKUP_DIR" | grep -qE "FileVault: +Yes"'
+    check "the backup volume is mounted and writable" 'touch "$BACKUP_DIR/.setup-check" && rm "$BACKUP_DIR/.setup-check"'
+    check "the keychain holds the passphrase of the backup volume" 'security find-generic-password -s "$BACKUP_SERVICE"'
+    check "the backup volume unlocks at login" 'launchctl print "gui/$(id -u)/$BACKUP_LABEL"'
+    check "the box backs up to $BACKUP_DIR" 'grep -qxF "ALDINE_BACKUP_DIR = \"$BACKUP_DIR\"" "$ALDINE_LOCAL"'
+  fi
   WIFI_WANT="${WIFI_WANT:-$(cat "$WIFI_FILE" 2>/dev/null || true)}"
   if [ -n "$WIFI_WANT" ]; then
     check "the office wifi $WIFI_WANT is saved" 'networksetup -listpreferredwirelessnetworks "$WIFI_DEVICE" | sed "s/^[[:space:]]*//" | grep -qxF "$WIFI_WANT"'
