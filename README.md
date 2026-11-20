@@ -41,7 +41,8 @@ unless you pass `--macos`, which reboots.
 - `bootstrap.sh` — curl-able entry point (Homebrew + clone + hand-off)
 - `update.sh` — routine updates: this repo, Homebrew, the toolchain, macOS
 - `setup.sh` — main setup: `brew bundle`, macOS defaults, security lockdown, Siri, analytics, AirDrop and Handoff off, the bundled App Store apps removed, Google Chrome, an Aldine app that opens Aldine in Chrome, a Dock with Aldine, Chrome and System Settings (and Terminal on dev), the Aldine mark as the desktop picture and the user picture (images in `assets/`; the desktop picture needs a logged-in session),
-  headless server behaviour, Remote Login (SSH), Tailscale, Ollama
+  headless server behaviour, Remote Login (SSH), Tailscale, Ollama, log rotation
+- `rotate-logs.sh` — rotates the Aldine and Ollama logs; `setup.sh` installs it
 - `Brewfile` — packages for all machines
 - `Brewfile.dev` — development toolchain, dev role only
 - `mise.toml` — `setup` and `update` as mise tasks
@@ -301,6 +302,18 @@ Ollama reads the file the same way as `OLLAMA_NO_CLOUD=1`.
 `OLLAMA_VERSION` in `setup.sh` and the version in aldine's
 `ops/box/ollama.json` together, then run `./setup.sh` on the machine. It
 installs the new version, restarts the agent, and removes the old version.
+
+## Log rotation
+
+Each Aldine and Ollama agent logs to `~/Library/Logs/ai.aldine.*.log`. A launchd user agent, `ai.aldine.rotate-logs`, rotates these logs, so they cannot fill the disk. The logs never leave the box.
+
+- The agent runs `~/.local/aldine/rotate-logs.sh` every hour. `setup.sh` copies it there from this repo.
+- A log rotates on the first run of each day, and when it is over 100 MB.
+- A rotated log is `<log>.<yyyymmddThhmmss>.gz`, next to the log. The agent deletes it after 14 days.
+- The agent copies the log, then empties it in place. It does not rename the log, because launchd opens the log once, when it starts an agent, and the agent keeps writing to that file. For the same reason, newsyslog cannot rotate these logs.
+- A line that an agent writes between the copy and the truncate is lost.
+
+To read the logs of a box from your laptop, run `mise run box:logs --box <host>` in aldine.
 
 ## Aldine app icon
 

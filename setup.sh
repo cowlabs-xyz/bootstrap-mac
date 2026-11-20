@@ -820,6 +820,54 @@ else
   echo "    no backup drive: the box takes no backups"
 fi
 
+echo "==> Log rotation"
+# The agent rotates each ~/Library/Logs/ai.aldine.*.log, the logs of Aldine and
+# Ollama, and keeps about 14 days of them. The logs never leave the box.
+# rotate-logs.sh says why it does not use newsyslog.
+ROTATE_LABEL="ai.aldine.rotate-logs"
+ROTATE_PLIST="$HOME/Library/LaunchAgents/$ROTATE_LABEL.plist"
+ROTATE_SCRIPT="$HOME/.local/aldine/rotate-logs.sh"
+mkdir -p "$(dirname "$ROTATE_SCRIPT")"
+install -m 755 rotate-logs.sh "$ROTATE_SCRIPT"
+ROTATE_PLIST_WANT="$(cat <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Written by bootstrap-mac setup.sh. Edits are overwritten. -->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>$ROTATE_LABEL</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/sh</string>
+    <string>$ROTATE_SCRIPT</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>StartInterval</key>
+  <integer>3600</integer>
+  <key>StandardOutPath</key>
+  <string>$HOME/Library/Logs/$ROTATE_LABEL.log</string>
+  <key>StandardErrorPath</key>
+  <string>$HOME/Library/Logs/$ROTATE_LABEL.log</string>
+</dict>
+</plist>
+EOF
+)"
+if [ "$(cat "$ROTATE_PLIST" 2>/dev/null)" != "$ROTATE_PLIST_WANT" ]; then
+  mkdir -p "$HOME/Library/LaunchAgents" "$HOME/Library/Logs"
+  echo "$ROTATE_PLIST_WANT" > "$ROTATE_PLIST"
+  launchctl bootout "gui/$(id -u)/$ROTATE_LABEL" 2>/dev/null || true
+  for _ in $(seq 1 10); do
+    launchctl print "gui/$(id -u)/$ROTATE_LABEL" &>/dev/null || break
+    sleep 1
+  done
+fi
+if ! launchctl print "gui/$(id -u)/$ROTATE_LABEL" &>/dev/null; then
+  launchctl bootstrap "gui/$(id -u)" "$ROTATE_PLIST"
+fi
+echo "    the box rotates its logs every day, and keeps 14 days of them"
+
 echo "==> Aldine"
 # Both roles run Aldine from a clone: ops/box/deploy.sh in aldine installs and
 # restarts it. Activate mise in the shells, so SSH sessions and the login shell
@@ -917,6 +965,7 @@ if [ "$ROLE" = "prod" ]; then
     echo "    -       no logo.dev key: vendors show their initials"
   fi
   check "Ollama $OLLAMA_VERSION answers" 'curl -fsS http://127.0.0.1:11434/api/version | grep -q "\"$OLLAMA_VERSION\""'
+  check "the box rotates its logs" 'launchctl print "gui/$(id -u)/$ROTATE_LABEL" | grep -q "last exit code = 0"'
   # A customer box holds the only copy of its data, so it needs its drive.
   if [ -z "$BACKUP_UUID" ]; then
     check "a backup drive with $BACKUP_VOLUME is plugged in" 'false'
