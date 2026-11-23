@@ -946,17 +946,21 @@ if [ "$ROLE" = "prod" ]; then
   ALDINE_DEPLOY_MODE=""
   # A re-run with the drive unplugged keeps the setting, so it does not turn
   # backups off.
-  if [ -n "$BACKUP_UUID" ] || [ "$(aldine_setting ALDINE_BACKUP_DIR)" = "$BACKUP_DIR" ]; then
+  if [ -n "$BACKUP_UUID" ] || [ "$(box_env_value ALDINE_BACKUP_DIR)" = "$BACKUP_DIR" ] || [ "$(mise_local_value ALDINE_BACKUP_DIR)" = "$BACKUP_DIR" ]; then
     ALDINE_BACKUP_SET="$BACKUP_DIR"
   fi
 else
   # The dev box runs as dev-box, with the debug service on.
   ALDINE_BOX_ID="dev-box"
   ALDINE_DEPLOY_MODE="dev"
-  value="$(aldine_setting ALDINE_DATA_DIR)"
-  if [[ "$value" == /* ]]; then
-    ALDINE_DATA_DIR="$value"
-  fi
+  # The first absolute path. A relative path in box.env must not hide the real
+  # folder in mise.local.toml.
+  for value in "$(box_env_value ALDINE_DATA_DIR)" "$(mise_local_value ALDINE_DATA_DIR)"; do
+    if [[ "$value" == /* ]]; then
+      ALDINE_DATA_DIR="$value"
+      break
+    fi
+  done
   LOGO_DEV_KEY="$(aldine_setting ALDINE_LOGO_DEV_SECRET_KEY)"
   if [ -n "$BACKUP_UUID" ]; then
     ALDINE_BACKUP_SET="$BACKUP_DIR"
