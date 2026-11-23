@@ -40,10 +40,15 @@ ALDINE_ENV="$HOME/.config/aldine/box.env"
 ALDINE_PORT=5173
 ALDINE_ADDR="127.0.0.1:$ALDINE_PORT"
 
+# Runs sh with the variables that a value in box.env can use under the agent.
+agent_sh() {
+  /usr/bin/env -i HOME="$HOME" USER="$USER" LOGNAME="${LOGNAME:-$USER}" /bin/sh -c "$@"
+}
+
 # The value of a setting in box.env, read the way the agent reads it, or nothing.
 box_env_value() {
   [ -f "$ALDINE_ENV" ] || return 0
-  /usr/bin/env -i HOME="$HOME" /bin/sh -c 'set -a; . "$1" && /usr/bin/printenv "$2"' _ "$ALDINE_ENV" "$1" 2>/dev/null || true
+  agent_sh 'set -a; . "$1" && /usr/bin/printenv "$2"' _ "$ALDINE_ENV" "$1" 2>/dev/null || true
 }
 
 # The value of a setting in aldine's mise.local.toml, or nothing. Boxes set up
