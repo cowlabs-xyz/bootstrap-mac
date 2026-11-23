@@ -246,10 +246,10 @@ fi
 
 # The deploy key for the aldine clone of a dev box. It is the last input, as a
 # person adds it on GitHub. A customer box has no clone, so it has no key.
-DEPLOY_KEY="$HOME/.ssh/aldine_deploy"
-SSH_ALIAS="github.com-aldine"
-
 if [ "$ROLE" = "dev" ]; then
+  DEPLOY_KEY="$HOME/.ssh/aldine_deploy"
+  SSH_ALIAS="github.com-aldine"
+
   # A deploy key reaches aldine and nothing else, so this machine holds no
   # account-wide GitHub credential. It lives behind a Host alias, so plain
   # github.com stays free for a forwarded agent (ssh -A) to serve.
