@@ -1041,6 +1041,7 @@ mkdir -p "$(dirname "$ALDINE_ENV")"
 chmod 700 "$(dirname "$ALDINE_ENV")"
 # box-server does not make its data folder, so make it before the restart below.
 mkdir -p "$ALDINE_DATA_DIR"
+ALDINE_RESTART=""
 if [ "$(cat "$ALDINE_ENV" 2>/dev/null)" != "$ALDINE_ENV_WANT" ]; then
   ( umask 077 && printf '%s\n' "$ALDINE_ENV_WANT" > "$ALDINE_ENV.tmp" )
   # The agent cannot start box-server from a file that sh cannot read.
@@ -1061,7 +1062,11 @@ if [ "$(cat "$ALDINE_ENV" 2>/dev/null)" != "$ALDINE_ENV_WANT" ]; then
   # first, which can take up to 15 minutes.
   if launchctl print "gui/$(id -u)/ai.aldine.box-server" &>/dev/null; then
     echo "    the settings changed: restarting box-server"
-    launchctl kickstart -k "gui/$(id -u)/ai.aldine.box-server" || true
+    if launchctl kickstart -k "gui/$(id -u)/ai.aldine.box-server"; then
+      ALDINE_RESTART=ok
+    else
+      ALDINE_RESTART=failed
+    fi
   fi
 fi
 chmod 600 "$ALDINE_ENV"
@@ -1081,6 +1086,11 @@ check() {
 # The settings in box.env, on both roles. A deploy of aldine reads the box id
 # and the deploy mode from box.env.
 check_aldine_settings() {
+  # A re-run does not restart box-server when box.env is the same, so the check
+  # names the command to run by hand.
+  if [ -n "$ALDINE_RESTART" ]; then
+    check "box-server restarted with the new settings (if not, run: launchctl kickstart -k gui/$(id -u)/ai.aldine.box-server)" '[ "$ALDINE_RESTART" = ok ]'
+  fi
   check "only $USER reads the Aldine settings" '[ "$(stat -f %Lp "$ALDINE_ENV")" = 600 ]'
   check "the box id is $ALDINE_BOX_ID" '[ "$(box_env_value ALDINE_BOX_ID)" = "$ALDINE_BOX_ID" ]'
   if [ -n "$ALDINE_DEPLOY_MODE" ]; then
