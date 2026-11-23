@@ -1025,6 +1025,13 @@ for key in ALDINE_DATA_DIR ALDINE_BACKUP_DIR ALDINE_LOGO_DEV_SECRET_KEY $ALDINE_
     echo "    WARNING: $key in mise.local.toml is empty, or setup.sh cannot read it. Add it to $ALDINE_ENV by hand."
   fi
 done
+# The variables that a file sets, other than the ones setup.sh writes. A re-run
+# must not change them.
+env_file_others() {
+  local keys
+  read -ra keys <<< "${ALDINE_ENV_KEYS//|/ } $ALDINE_CARRY_KEYS"
+  agent_sh 'file="$1"; shift; set -a; . "$file"; set +a; unset file "$@"; /usr/bin/env -0 | /usr/bin/sort -z | /usr/bin/tr "\000" "\001"' _ "$1" "${keys[@]}" 2>/dev/null
+}
 ALDINE_ENV_WANT="$(
   echo "$ALDINE_ENV_HEADER"
   printf '%s' "$ALDINE_ENV_LINES$ALDINE_CARRY_LINES"
@@ -1040,6 +1047,12 @@ if [ "$(cat "$ALDINE_ENV" 2>/dev/null)" != "$ALDINE_ENV_WANT" ]; then
   if ! /bin/sh -n "$ALDINE_ENV.tmp" 2>/dev/null; then
     rm -f "$ALDINE_ENV.tmp"
     echo "ERROR: the new $ALDINE_ENV is not valid for sh. The file did not change." >&2
+    exit 1
+  fi
+  # A line of a multi-line value can look like a managed setting.
+  if [ -f "$ALDINE_ENV" ] && [ "$(env_file_others "$ALDINE_ENV")" != "$(env_file_others "$ALDINE_ENV.tmp")" ]; then
+    rm -f "$ALDINE_ENV.tmp"
+    echo "ERROR: a re-run would change another setting in $ALDINE_ENV. Put each value on one line. The file did not change." >&2
     exit 1
   fi
   mv "$ALDINE_ENV.tmp" "$ALDINE_ENV"
