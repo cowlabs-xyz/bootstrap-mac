@@ -44,10 +44,11 @@ box_env_value() {
 }
 
 # The value of a setting in aldine's mise.local.toml, or nothing. Boxes set up
-# before box.env kept their settings there.
+# before box.env kept their settings there. The value can be in double or
+# single quotes, and a comment can follow it.
 mise_local_value() {
   [ -f "$ALDINE_LOCAL" ] || return 0
-  sed -n "s/^$1 *= *\"\(.*\)\"\$/\1/p" "$ALDINE_LOCAL" | tail -n 1
+  sed -nE "s/^$1[[:space:]]*=[[:space:]]*\"([^\"]*)\"[[:space:]]*(#.*)?\$/\1/p; s/^$1[[:space:]]*=[[:space:]]*'([^']*)'[[:space:]]*(#.*)?\$/\1/p" "$ALDINE_LOCAL" | tail -n 1
 }
 
 # An unreadable box.env reads as empty, and a re-run would then drop its
