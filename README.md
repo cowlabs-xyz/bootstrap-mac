@@ -67,7 +67,7 @@ Both roles add `brew shellenv` to `~/.zprofile`, so SSH sessions get the Homebre
 
 - Each line is `KEY=value`. A value with a space, such as the backup folder, is in single quotes.
 - The file has mode 600, as it holds the logo.dev key. Never put the file or a key in this repo.
-- A re-run writes the settings below again. It keeps any other line that sets a variable, such as `ALDINE_LOG_LEVEL=debug`.
+- A re-run writes the settings below again. It keeps every other line, such as a comment or `ALDINE_LOG_LEVEL=debug`. It does not replace the file if `sh` cannot read the result.
 - When a re-run changes the file, it restarts `ai.aldine.box-server` if the agent runs, so the new settings apply. The box finishes the running job first.
 
 | Setting | Customer box | Dev box |

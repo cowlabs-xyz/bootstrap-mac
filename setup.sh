@@ -920,10 +920,12 @@ if [ "$ROLE" = "dev" ]; then
 fi
 
 echo "==> Aldine settings"
-# box.env belongs to setup.sh: a re-run writes the settings below again. A line
-# that sets any other variable, such as ALDINE_LOG_LEVEL, stays. The values come
-# from the inputs, then from box.env, then from aldine's mise.local.toml, where
-# boxes set up before box.env kept them.
+# box.env belongs to setup.sh: a re-run writes the settings below again. Every
+# other line stays, such as a comment or ALDINE_LOG_LEVEL. The values come from
+# the inputs, then from box.env, then from aldine's mise.local.toml, where boxes
+# set up before box.env kept them.
+ALDINE_ENV_HEADER="# Written by bootstrap-mac setup.sh. A re-run writes the ALDINE_ settings that setup.sh sets, and keeps other lines."
+ALDINE_ENV_SETS='^[[:space:]]*(export[[:space:]]+)?'
 ALDINE_ENV_KEYS="ALDINE_BOX_ID|ALDINE_DEPLOY_MODE|ALDINE_ADDR|ALDINE_DATA_DIR|ALDINE_BACKUP_DIR|ALDINE_LOGO_DEV_SECRET_KEY|ALDINE_LOG_FORMAT"
 ALDINE_DATA_DIR="$HOME/aldine"
 ALDINE_BACKUP_SET=""
@@ -972,7 +974,7 @@ ALDINE_CARRY_KEYS="ALDINE_LOG_LEVEL ALDINE_OLLAMA_URL"
 ALDINE_CARRY_LINES=""
 for key in $ALDINE_CARRY_KEYS; do
   value="$(mise_local_value "$key")"
-  if [ -n "$value" ] && ! grep -qE "^$key=" "$ALDINE_ENV" 2>/dev/null; then
+  if [ -n "$value" ] && ! grep -qE "$ALDINE_ENV_SETS$key=" "$ALDINE_ENV" 2>/dev/null; then
     ALDINE_CARRY_LINES+="$(env_line "$key" "$value")"$'\n'
   fi
 done
@@ -981,7 +983,7 @@ if [ -n "$ALDINE_NOT_CARRIED" ]; then
   echo "    not carried over from mise.local.toml, as box-server does not read them: $ALDINE_NOT_CARRIED"
 fi
 ALDINE_ENV_WANT="$(
-  echo "# Written by bootstrap-mac setup.sh. A re-run writes the ALDINE_ settings that setup.sh sets, and keeps other lines."
+  echo "$ALDINE_ENV_HEADER"
   env_line ALDINE_BOX_ID "$ALDINE_BOX_ID"
   [ -z "$ALDINE_DEPLOY_MODE" ] || env_line ALDINE_DEPLOY_MODE "$ALDINE_DEPLOY_MODE"
   env_line ALDINE_ADDR "127.0.0.1:5173"
@@ -990,12 +992,18 @@ ALDINE_ENV_WANT="$(
   [ -z "$LOGO_DEV_KEY" ] || env_line ALDINE_LOGO_DEV_SECRET_KEY "$LOGO_DEV_KEY"
   env_line ALDINE_LOG_FORMAT console
   printf '%s' "$ALDINE_CARRY_LINES"
-  grep -E '^[A-Za-z_][A-Za-z0-9_]*=' "$ALDINE_ENV" 2>/dev/null | grep -vE "^($ALDINE_ENV_KEYS)=" || true
+  grep -vE "$ALDINE_ENV_SETS($ALDINE_ENV_KEYS)=" "$ALDINE_ENV" 2>/dev/null | grep -vxF "$ALDINE_ENV_HEADER" || true
 )"
 mkdir -p "$(dirname "$ALDINE_ENV")"
 chmod 700 "$(dirname "$ALDINE_ENV")"
 if [ "$(cat "$ALDINE_ENV" 2>/dev/null)" != "$ALDINE_ENV_WANT" ]; then
   ( umask 077 && printf '%s\n' "$ALDINE_ENV_WANT" > "$ALDINE_ENV.tmp" )
+  # The agent cannot start box-server from a file that sh cannot read.
+  if ! /bin/sh -n "$ALDINE_ENV.tmp" 2>/dev/null; then
+    rm -f "$ALDINE_ENV.tmp"
+    echo "ERROR: the new $ALDINE_ENV is not valid for sh. The file did not change." >&2
+    exit 1
+  fi
   mv "$ALDINE_ENV.tmp" "$ALDINE_ENV"
   # box-server reads the file only when it starts. A box that runs it now
   # restarts it, so a new setting applies. The box finishes the running job
