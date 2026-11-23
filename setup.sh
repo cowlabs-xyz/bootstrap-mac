@@ -56,7 +56,7 @@ box_env_value() {
 # single quotes, and a comment can follow it.
 mise_local_value() {
   [ -f "$ALDINE_LOCAL" ] || return 0
-  sed -nE "s/^$1[[:space:]]*=[[:space:]]*\"([^\"]*)\"[[:space:]]*(#.*)?\$/\1/p; s/^$1[[:space:]]*=[[:space:]]*'([^']*)'[[:space:]]*(#.*)?\$/\1/p" "$ALDINE_LOCAL" | tail -n 1
+  sed -nE "s/^[[:space:]]*$1[[:space:]]*=[[:space:]]*\"([^\"]*)\"[[:space:]]*(#.*)?\$/\1/p; s/^[[:space:]]*$1[[:space:]]*=[[:space:]]*'([^']*)'[[:space:]]*(#.*)?\$/\1/p" "$ALDINE_LOCAL" | tail -n 1
 }
 
 # The value of a setting: from box.env, else from mise.local.toml.
@@ -1013,10 +1013,18 @@ for key in $ALDINE_CARRY_KEYS; do
     ALDINE_CARRY_LINES+="$(env_line "$key" "$value")"$'\n'
   fi
 done
-ALDINE_NOT_CARRIED="$(sed -n 's/^\(ALDINE_[A-Za-z0-9_]*\) *=.*/\1/p' "$ALDINE_LOCAL" 2>/dev/null | grep -vE "^($ALDINE_ENV_KEYS|${ALDINE_CARRY_KEYS// /|})\$" | sort -u | tr '\n' ' ' || true)"
+ALDINE_LOCAL_KEYS="$(sed -nE 's/^[[:space:]]*(ALDINE_[A-Za-z0-9_]*)[[:space:]]*=.*/\1/p' "$ALDINE_LOCAL" 2>/dev/null | sort -u || true)"
+ALDINE_NOT_CARRIED="$(printf '%s\n' "$ALDINE_LOCAL_KEYS" | grep -vE "^($ALDINE_ENV_KEYS|${ALDINE_CARRY_KEYS// /|})\$" | tr '\n' ' ' || true)"
 if [ -n "$ALDINE_NOT_CARRIED" ]; then
   echo "    not carried over from mise.local.toml, as box-server does not read them: $ALDINE_NOT_CARRIED"
 fi
+# A setting that setup.sh takes from mise.local.toml, with a value that it
+# cannot read, such as one with an escaped quote. box.env does not get it.
+for key in ALDINE_DATA_DIR ALDINE_BACKUP_DIR ALDINE_LOGO_DEV_SECRET_KEY $ALDINE_CARRY_KEYS; do
+  if printf '%s\n' "$ALDINE_LOCAL_KEYS" | grep -qxF "$key" && [ -z "$(mise_local_value "$key")" ] && [ -z "$(box_env_value "$key")" ]; then
+    echo "    WARNING: $key in mise.local.toml is empty, or setup.sh cannot read it. Add it to $ALDINE_ENV by hand."
+  fi
+done
 ALDINE_ENV_WANT="$(
   echo "$ALDINE_ENV_HEADER"
   printf '%s' "$ALDINE_ENV_LINES$ALDINE_CARRY_LINES"
