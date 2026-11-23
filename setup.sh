@@ -996,6 +996,8 @@ ALDINE_ENV_WANT="$(
 )"
 mkdir -p "$(dirname "$ALDINE_ENV")"
 chmod 700 "$(dirname "$ALDINE_ENV")"
+# box-server does not make its data folder, so make it before the restart below.
+mkdir -p "$ALDINE_DATA_DIR"
 if [ "$(cat "$ALDINE_ENV" 2>/dev/null)" != "$ALDINE_ENV_WANT" ]; then
   ( umask 077 && printf '%s\n' "$ALDINE_ENV_WANT" > "$ALDINE_ENV.tmp" )
   # The agent cannot start box-server from a file that sh cannot read.
@@ -1014,8 +1016,6 @@ if [ "$(cat "$ALDINE_ENV" 2>/dev/null)" != "$ALDINE_ENV_WANT" ]; then
   fi
 fi
 chmod 600 "$ALDINE_ENV"
-# box-server does not make its data folder.
-mkdir -p "$ALDINE_DATA_DIR"
 echo "    $ALDINE_ENV: box id $ALDINE_BOX_ID"
 
 echo
