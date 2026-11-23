@@ -5,7 +5,8 @@
 #
 # All machines are headless servers accessed over Tailscale. Roles:
 #   dev  — remote development: builds, tests, evals; full dev toolchain
-#   prod — Aldine production deployment; minimal tooling
+#   prod — a customer box: runs a release of Aldine; no aldine clone and no
+#          toolchain
 # Pass the role as $1 on first run, or you'll be prompted; it is
 # persisted to ~/.mac-role and reused on later runs.
 #
@@ -26,8 +27,28 @@ echo "==> Role: $ROLE"
 
 eval "$(/opt/homebrew/bin/brew shellenv 2>/dev/null || /usr/local/bin/brew shellenv)"
 
+# A dev box keeps a clone of aldine, as it builds and tests it. A customer box
+# has no clone: a deploy copies a release of box-server to it.
 ALDINE_DIR="$HOME/git/cowlabs/aldine"
 ALDINE_LOCAL="$ALDINE_DIR/mise.local.toml"
+
+# The settings of box-server, on every box. The agent ai.aldine.box-server
+# reads them with sh at each start, so each line is KEY=value. setup.sh writes
+# the file. See "Aldine settings" in the README.
+ALDINE_ENV="$HOME/.config/aldine/box.env"
+
+# The value of a setting in box.env, read the way the agent reads it, or nothing.
+box_env_value() {
+  [ -f "$ALDINE_ENV" ] || return 0
+  /usr/bin/env -i /bin/sh -c 'set -a; . "$1" && /usr/bin/printenv "$2"' _ "$ALDINE_ENV" "$1" 2>/dev/null || true
+}
+
+# The value of a setting in aldine's mise.local.toml, or nothing. Boxes set up
+# before box.env kept their settings there.
+mise_local_value() {
+  [ -f "$ALDINE_LOCAL" ] || return 0
+  sed -n "s/^$1 *= *\"\(.*\)\"\$/\1/p" "$ALDINE_LOCAL" | tail -n 1
+}
 
 # --- Inputs -------------------------------------------------------------
 # Every input comes first, so the rest runs with nobody at the keyboard. A
@@ -83,9 +104,10 @@ if [ "$ROLE" = "prod" ]; then
     fi
   fi
 
-  # The key for vendor logos. It goes in aldine's mise.local.toml, never in this
-  # public repo.
-  LOGO_DEV_KEY="$(sed -n 's/^ALDINE_LOGO_DEV_SECRET_KEY = "\(.*\)"$/\1/p' "$ALDINE_LOCAL" 2>/dev/null || true)"
+  # The key for vendor logos. It goes in box.env, never in this public repo. A
+  # box set up before box.env kept it in aldine's mise.local.toml.
+  LOGO_DEV_KEY="$(box_env_value ALDINE_LOGO_DEV_SECRET_KEY)"
+  [ -n "$LOGO_DEV_KEY" ] || LOGO_DEV_KEY="$(mise_local_value ALDINE_LOGO_DEV_SECRET_KEY)"
   if [ -n "$LOGO_DEV_KEY" ]; then
     echo "    logo.dev key: already set"
   else
@@ -214,21 +236,22 @@ if ! tailscale status &>/dev/null && [ -z "${TS_AUTHKEY:-}" ]; then
   echo
 fi
 
-# The deploy key for the aldine clone. It is the last input, as a person adds
-# it on GitHub.
+# The deploy key for the aldine clone of a dev box. It is the last input, as a
+# person adds it on GitHub. A customer box has no clone, so it has no key.
 DEPLOY_KEY="$HOME/.ssh/aldine_deploy"
 SSH_ALIAS="github.com-aldine"
 
-# A deploy key reaches aldine and nothing else, so this machine holds no
-# account-wide GitHub credential. It lives behind a Host alias, so plain
-# github.com stays free for a forwarded agent (ssh -A) to serve.
-mkdir -p "$HOME/.ssh"
-chmod 700 "$HOME/.ssh"
-if [ ! -f "$DEPLOY_KEY" ]; then
-  ssh-keygen -t ed25519 -f "$DEPLOY_KEY" -N "" -C "aldine-deploy-${BOX_NAME:-$(hostname -s)}"
-fi
-if ! grep -q "^Host $SSH_ALIAS\$" "$HOME/.ssh/config" 2>/dev/null; then
-  cat >> "$HOME/.ssh/config" <<EOF
+if [ "$ROLE" = "dev" ]; then
+  # A deploy key reaches aldine and nothing else, so this machine holds no
+  # account-wide GitHub credential. It lives behind a Host alias, so plain
+  # github.com stays free for a forwarded agent (ssh -A) to serve.
+  mkdir -p "$HOME/.ssh"
+  chmod 700 "$HOME/.ssh"
+  if [ ! -f "$DEPLOY_KEY" ]; then
+    ssh-keygen -t ed25519 -f "$DEPLOY_KEY" -N "" -C "aldine-deploy-$(hostname -s)"
+  fi
+  if ! grep -q "^Host $SSH_ALIAS\$" "$HOME/.ssh/config" 2>/dev/null; then
+    cat >> "$HOME/.ssh/config" <<EOF
 
 Host $SSH_ALIAS
   HostName github.com
@@ -236,34 +259,31 @@ Host $SSH_ALIAS
   IdentityFile $DEPLOY_KEY
   IdentitiesOnly yes
 EOF
-  chmod 600 "$HOME/.ssh/config"
-fi
-
-# ssh -T exits 1 even when it authenticates, because GitHub refuses shell
-# access. Under pipefail, `ssh | grep` would therefore always look like a
-# failure, so capture the output and match it instead.
-deploy_key_ready() {
-  local out
-  out=$(ssh -T -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 \
-    "git@$SSH_ALIAS" 2>&1 || true)
-  [[ "$out" == *"successfully authenticated"* ]]
-}
-
-# Wait until the public key is registered on the repo. A dev box pushes, so its
-# key can write. A customer box only pulls, so its key is read-only.
-until deploy_key_ready; do
-  echo
-  if [ "$ROLE" = "dev" ]; then
-    echo "    Add this deploy key to aldine, with write access:"
-  else
-    echo "    Add this deploy key to aldine, titled $BOX_NAME. Leave write access off:"
+    chmod 600 "$HOME/.ssh/config"
   fi
-  echo "    https://github.com/cowlabs-xyz/aldine/settings/keys/new"
-  echo
-  cat "$DEPLOY_KEY.pub"
-  echo
-  read -rp "    Press enter once it is added: "
-done
+
+  # ssh -T exits 1 even when it authenticates, because GitHub refuses shell
+  # access. Under pipefail, `ssh | grep` would therefore always look like a
+  # failure, so capture the output and match it instead.
+  deploy_key_ready() {
+    local out
+    out=$(ssh -T -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 \
+      "git@$SSH_ALIAS" 2>&1 || true)
+    [[ "$out" == *"successfully authenticated"* ]]
+  }
+
+  # Wait until the public key is registered on the repo. A dev box pushes, so
+  # its key can write.
+  until deploy_key_ready; do
+    echo
+    echo "    Add this deploy key to aldine, with write access:"
+    echo "    https://github.com/cowlabs-xyz/aldine/settings/keys/new"
+    echo
+    cat "$DEPLOY_KEY.pub"
+    echo
+    read -rp "    Press enter once it is added: "
+  done
+fi
 
 
 echo "==> Installing packages from Brewfile"
@@ -352,7 +372,7 @@ if defaults read MobileMeAccounts Accounts 2>/dev/null | grep -q AccountID; then
   echo "    WARNING: this Mac is signed in to an Apple ID. Sign out in System Settings."
 fi
 
-# Vite serves Aldine on this port on every box. See ops/box/deploy.sh in aldine.
+# box-server serves Aldine on this port on every box: ALDINE_ADDR in box.env.
 ALDINE_URL="http://localhost:5173"
 
 if [ "$ROLE" = "prod" ]; then
@@ -625,7 +645,7 @@ echo "==> Ollama"
 # formula: Homebrew builds with no network, so it lacks libollama_xgrammar.dylib,
 # and models that run on MLX then refuse structured output (HTTP 501). Not the
 # Mac app either: it checks for updates every hour and sends a device ID.
-# The version is pinned. Change it here and in aldine's ops/box/ollama.json
+# The version is pinned. Change it here and in aldine's box-server/ollama.json
 # together; a re-run of setup.sh installs it and removes the old one.
 OLLAMA_VERSION="0.40.6"
 OLLAMA_ROOT="$HOME/.local/ollama"
@@ -868,76 +888,151 @@ if ! launchctl print "gui/$(id -u)/$ROTATE_LABEL" &>/dev/null; then
 fi
 echo "    the box rotates its logs every day, and keeps 14 days of them"
 
-echo "==> Aldine"
-# Both roles run Aldine from a clone: ops/box/deploy.sh in aldine installs and
-# restarts it. Activate mise in the shells, so SSH sessions and the login shell
-# of the launchd agent get the pinned tools.
+# SSH sessions get the Homebrew tools, such as tailscale.
 if ! grep -q "brew shellenv" "$HOME/.zprofile" 2>/dev/null; then
   echo 'eval "$(/opt/homebrew/bin/brew shellenv)"' >> "$HOME/.zprofile"
 fi
-if ! grep -q "mise activate" "$HOME/.zshrc" 2>/dev/null; then
-  echo 'eval "$(mise activate zsh)"' >> "$HOME/.zshrc"
-fi
-if [ ! -d "$ALDINE_DIR/.git" ]; then
-  mkdir -p "$(dirname "$ALDINE_DIR")"
-  git clone "git@$SSH_ALIAS:cowlabs-xyz/aldine.git" "$ALDINE_DIR"
+
+if [ "$ROLE" = "dev" ]; then
+  echo "==> Aldine checkout"
+  # The dev box builds and tests aldine, and runs its CI. Activate mise in the
+  # shells, so SSH sessions and the CI runner get the pinned tools.
+  if ! grep -q "mise activate" "$HOME/.zshrc" 2>/dev/null; then
+    echo 'eval "$(mise activate zsh)"' >> "$HOME/.zshrc"
+  fi
+  if [ ! -d "$ALDINE_DIR/.git" ]; then
+    mkdir -p "$(dirname "$ALDINE_DIR")"
+    git clone "git@$SSH_ALIAS:cowlabs-xyz/aldine.git" "$ALDINE_DIR"
+  fi
+  # mise refuses to run an untrusted config file
+  mise trust "$ALDINE_DIR/mise.toml"
+  # Go, Node, pnpm, buf and golangci-lint at the versions the repo pins, the
+  # pnpm deps and the Playwright browser.
+  (cd "$ALDINE_DIR" && mise install && mise run setup)
 fi
 
-# A customer box carries its own id, which also turns off the debug service.
-# This file belongs to setup.sh on a prod box: a re-run writes it again.
+echo "==> Aldine settings"
+# box.env belongs to setup.sh: a re-run writes the settings below again. A line
+# that sets any other variable, such as ALDINE_LOG_LEVEL, stays. The values come
+# from the inputs, then from box.env, then from aldine's mise.local.toml, where
+# boxes set up before box.env kept them.
+ALDINE_ENV_KEYS="ALDINE_BOX_ID|ALDINE_DEPLOY_MODE|ALDINE_ADDR|ALDINE_DATA_DIR|ALDINE_BACKUP_DIR|ALDINE_LOGO_DEV_SECRET_KEY|ALDINE_LOG_FORMAT"
+ALDINE_DATA_DIR="$HOME/aldine"
+ALDINE_BACKUP_SET=""
 if [ "$ROLE" = "prod" ]; then
+  # A customer box carries its own id, and has no debug service.
+  ALDINE_BOX_ID="$BOX_NAME"
+  ALDINE_DEPLOY_MODE=""
   # A re-run with the drive unplugged keeps the setting, so it does not turn
   # backups off.
-  BACKUP_SET=false
-  if [ -n "$BACKUP_UUID" ] || grep -qxF "ALDINE_BACKUP_DIR = \"$BACKUP_DIR\"" "$ALDINE_LOCAL" 2>/dev/null; then
-    BACKUP_SET=true
+  if [ -n "$BACKUP_UUID" ] || [ "$(box_env_value ALDINE_BACKUP_DIR)" = "$BACKUP_DIR" ] || [ "$(mise_local_value ALDINE_BACKUP_DIR)" = "$BACKUP_DIR" ]; then
+    ALDINE_BACKUP_SET="$BACKUP_DIR"
   fi
-  ALDINE_LOCAL_WANT="$(cat <<EOF
-# Written by bootstrap-mac setup.sh. Edits are overwritten.
-[env]
-ALDINE_BOX_ID = "$BOX_NAME"
-EOF
-)"
-  if [ -n "$LOGO_DEV_KEY" ]; then
-    ALDINE_LOCAL_WANT="$ALDINE_LOCAL_WANT
-ALDINE_LOGO_DEV_SECRET_KEY = \"$LOGO_DEV_KEY\""
+else
+  # The dev box runs as dev-box, with the debug service on.
+  ALDINE_BOX_ID="dev-box"
+  ALDINE_DEPLOY_MODE="dev"
+  for value in "$(box_env_value ALDINE_DATA_DIR)" "$(mise_local_value ALDINE_DATA_DIR)"; do
+    if [[ "$value" == /* ]]; then
+      ALDINE_DATA_DIR="$value"
+      break
+    fi
+  done
+  LOGO_DEV_KEY="$(box_env_value ALDINE_LOGO_DEV_SECRET_KEY)"
+  [ -n "$LOGO_DEV_KEY" ] || LOGO_DEV_KEY="$(mise_local_value ALDINE_LOGO_DEV_SECRET_KEY)"
+  if [ -n "$BACKUP_UUID" ]; then
+    ALDINE_BACKUP_SET="$BACKUP_DIR"
+  else
+    ALDINE_BACKUP_SET="$(box_env_value ALDINE_BACKUP_DIR)"
+    [ -n "$ALDINE_BACKUP_SET" ] || ALDINE_BACKUP_SET="$(mise_local_value ALDINE_BACKUP_DIR)"
   fi
-  if [ "$BACKUP_SET" = true ]; then
-    ALDINE_LOCAL_WANT="$ALDINE_LOCAL_WANT
-ALDINE_BACKUP_DIR = \"$BACKUP_DIR\""
-  fi
-  ( umask 077 && echo "$ALDINE_LOCAL_WANT" > "$ALDINE_LOCAL" )
-  mise trust "$ALDINE_LOCAL"
-elif [ -n "$BACKUP_UUID" ]; then
-  # A dev box keeps its own mise.local.toml. Add the setting to it.
-  ( umask 077 && touch "$ALDINE_LOCAL" )
-  mise trust "$ALDINE_LOCAL"
-  (cd "$ALDINE_DIR" && mise set --file "$ALDINE_LOCAL" "ALDINE_BACKUP_DIR=$BACKUP_DIR")
 fi
 
-# mise refuses to run an untrusted config file
-mise trust "$ALDINE_DIR/mise.toml"
-# Go, Node, pnpm, buf and golangci-lint at the versions the repo pins. A dev
-# box also gets the pnpm deps and the Playwright browser. A deploy installs
-# what a prod box needs.
-if [ "$ROLE" = "dev" ]; then
-  (cd "$ALDINE_DIR" && mise install && mise run setup)
-else
-  (cd "$ALDINE_DIR" && mise install)
+# One KEY=value line. A value with a space or another sign that sh reads, such
+# as the backup folder, goes in single quotes.
+env_line() {
+  case "$2" in
+    *[!A-Za-z0-9_./:@-]*) printf "%s='%s'\n" "$1" "$(printf '%s' "$2" | sed "s/'/'\\\\''/g")" ;;
+    *) printf '%s=%s\n' "$1" "$2" ;;
+  esac
+}
+# The other settings that box-server reads. A box set up before box.env kept
+# them in mise.local.toml: setup.sh adds them to box.env once, and box.env
+# keeps them as other lines. The settings of the box watch, such as
+# ALDINE_WATCH_BOXES and ALDINE_SLACK_WEBHOOK_URL, are not for box-server.
+ALDINE_CARRY_KEYS="ALDINE_LOG_LEVEL ALDINE_OLLAMA_URL"
+ALDINE_CARRY_LINES=""
+for key in $ALDINE_CARRY_KEYS; do
+  value="$(mise_local_value "$key")"
+  if [ -n "$value" ] && ! grep -qE "^$key=" "$ALDINE_ENV" 2>/dev/null; then
+    ALDINE_CARRY_LINES+="$(env_line "$key" "$value")"$'\n'
+  fi
+done
+ALDINE_NOT_CARRIED="$(sed -n 's/^\(ALDINE_[A-Za-z0-9_]*\) *=.*/\1/p' "$ALDINE_LOCAL" 2>/dev/null | grep -vE "^($ALDINE_ENV_KEYS|${ALDINE_CARRY_KEYS// /|})\$" | sort -u | tr '\n' ' ' || true)"
+if [ -n "$ALDINE_NOT_CARRIED" ]; then
+  echo "    not carried over from mise.local.toml, as box-server does not read them: $ALDINE_NOT_CARRIED"
 fi
+ALDINE_ENV_WANT="$(
+  echo "# Written by bootstrap-mac setup.sh. A re-run writes the ALDINE_ settings that setup.sh sets, and keeps other lines."
+  env_line ALDINE_BOX_ID "$ALDINE_BOX_ID"
+  [ -z "$ALDINE_DEPLOY_MODE" ] || env_line ALDINE_DEPLOY_MODE "$ALDINE_DEPLOY_MODE"
+  env_line ALDINE_ADDR "127.0.0.1:5173"
+  env_line ALDINE_DATA_DIR "$ALDINE_DATA_DIR"
+  [ -z "$ALDINE_BACKUP_SET" ] || env_line ALDINE_BACKUP_DIR "$ALDINE_BACKUP_SET"
+  [ -z "$LOGO_DEV_KEY" ] || env_line ALDINE_LOGO_DEV_SECRET_KEY "$LOGO_DEV_KEY"
+  env_line ALDINE_LOG_FORMAT console
+  printf '%s' "$ALDINE_CARRY_LINES"
+  grep -E '^[A-Za-z_][A-Za-z0-9_]*=' "$ALDINE_ENV" 2>/dev/null | grep -vE "^($ALDINE_ENV_KEYS)=" || true
+)"
+mkdir -p "$(dirname "$ALDINE_ENV")"
+chmod 700 "$(dirname "$ALDINE_ENV")"
+if [ "$(cat "$ALDINE_ENV" 2>/dev/null)" != "$ALDINE_ENV_WANT" ]; then
+  ( umask 077 && printf '%s\n' "$ALDINE_ENV_WANT" > "$ALDINE_ENV.tmp" )
+  mv "$ALDINE_ENV.tmp" "$ALDINE_ENV"
+  # box-server reads the file only when it starts. A box that runs it now
+  # restarts it, so a new setting applies. The box finishes the running job
+  # first, which can take up to 15 minutes.
+  if launchctl print "gui/$(id -u)/ai.aldine.box-server" &>/dev/null; then
+    echo "    the settings changed: restarting box-server"
+    launchctl kickstart -k "gui/$(id -u)/ai.aldine.box-server" || true
+  fi
+fi
+chmod 600 "$ALDINE_ENV"
+# box-server does not make its data folder.
+mkdir -p "$ALDINE_DATA_DIR"
+echo "    $ALDINE_ENV: box id $ALDINE_BOX_ID"
+
+echo
+echo "==> Check"
+FAILED=0
+check() {
+  if eval "$2" &>/dev/null; then
+    echo "    ok      $1"
+  else
+    echo "    FAILED  $1"
+    FAILED=$((FAILED + 1))
+  fi
+}
+# The settings in box.env, on both roles. A deploy of aldine reads the box id
+# and the deploy mode from box.env.
+check_aldine_settings() {
+  check "only $USER reads the Aldine settings" '[ "$(stat -f %Lp "$ALDINE_ENV")" = 600 ]'
+  check "the box id is $ALDINE_BOX_ID" '[ "$(box_env_value ALDINE_BOX_ID)" = "$ALDINE_BOX_ID" ]'
+  if [ -n "$ALDINE_DEPLOY_MODE" ]; then
+    check "the deploy mode is $ALDINE_DEPLOY_MODE" '[ "$(box_env_value ALDINE_DEPLOY_MODE)" = "$ALDINE_DEPLOY_MODE" ]'
+  else
+    check "the debug service is off" '[ -z "$(box_env_value ALDINE_DEPLOY_MODE)" ]'
+  fi
+  check "Aldine serves on localhost:5173" '[ "$(box_env_value ALDINE_ADDR)" = 127.0.0.1:5173 ]'
+  check "the data folder $ALDINE_DATA_DIR is there" '[ "$(box_env_value ALDINE_DATA_DIR)" = "$ALDINE_DATA_DIR" ] && [ -d "$ALDINE_DATA_DIR" ]'
+  if [ -n "$(box_env_value ALDINE_LOGO_DEV_SECRET_KEY)" ]; then
+    echo "    ok      the logo.dev key is set"
+  else
+    echo "    -       no logo.dev key: vendors show their initials"
+  fi
+}
 
 if [ "$ROLE" = "prod" ]; then
-  echo
-  echo "==> Check"
-  FAILED=0
-  check() {
-    if eval "$2" &>/dev/null; then
-      echo "    ok      $1"
-    else
-      echo "    FAILED  $1"
-      FAILED=$((FAILED + 1))
-    fi
-  }
   check "hostname is $BOX_NAME" '[ "$(scutil --get HostName)" = "$BOX_NAME" ]'
   check "tailscaled is loaded" 'sudo launchctl print "system/$TS_LABEL"'
   check "Tailscale comes back by itself when something unloads it" 'sudo launchctl print "system/$TS_WATCHDOG_LABEL" && [ -f "$TS_KEG_PLIST" ]'
@@ -956,14 +1051,7 @@ if [ "$ROLE" = "prod" ]; then
   check "the Dock holds Chrome and System Settings" 'defaults read com.apple.dock persistent-apps | grep -q "Google Chrome.app" && ! defaults read com.apple.dock persistent-apps | grep -q "Safari.app"'
   check "the user picture is the Aldine mark" '! dscl . -read "/Users/$USER" AvatarRepresentation && [ "$(dscl . -read "/Users/$USER" Picture | tail -1 | sed "s/^Picture: //; s/^ //")" = "$USER_PICTURE" ]'
   check "the screen locks 5 seconds after the display sleeps" 'sysadminctl -screenLock status 2>&1 | grep -q "$SCREEN_LOCK_STATUS"'
-  check "the deploy key reaches aldine" 'deploy_key_ready'
-  check "aldine is cloned" '[ -d "$ALDINE_DIR/.git" ]'
-  check "the box id is $BOX_NAME" 'grep -qxF "ALDINE_BOX_ID = \"$BOX_NAME\"" "$ALDINE_LOCAL"'
-  if grep -q "^ALDINE_LOGO_DEV_SECRET_KEY = " "$ALDINE_LOCAL"; then
-    echo "    ok      the logo.dev key is set"
-  else
-    echo "    -       no logo.dev key: vendors show their initials"
-  fi
+  check_aldine_settings
   check "Ollama $OLLAMA_VERSION answers" 'curl -fsS http://127.0.0.1:11434/api/version | grep -q "\"$OLLAMA_VERSION\""'
   check "the box rotates its logs" 'launchctl print "gui/$(id -u)/$ROTATE_LABEL" | grep -q "last exit code = 0"'
   # A customer box holds the only copy of its data, so it needs its drive.
@@ -974,7 +1062,7 @@ if [ "$ROLE" = "prod" ]; then
     check "the backup volume is mounted and writable" 'touch "$BACKUP_DIR/.setup-check" && rm "$BACKUP_DIR/.setup-check"'
     check "the keychain holds the passphrase of the backup volume" 'security find-generic-password -s "$BACKUP_SERVICE"'
     check "the backup volume unlocks at login" 'launchctl print "gui/$(id -u)/$BACKUP_LABEL"'
-    check "the box backs up to $BACKUP_DIR" 'grep -qxF "ALDINE_BACKUP_DIR = \"$BACKUP_DIR\"" "$ALDINE_LOCAL"'
+    check "the box backs up to $BACKUP_DIR" '[ "$(box_env_value ALDINE_BACKUP_DIR)" = "$BACKUP_DIR" ]'
   fi
   WIFI_WANT="${WIFI_WANT:-$(cat "$WIFI_FILE" 2>/dev/null || true)}"
   if [ -n "$WIFI_WANT" ]; then
@@ -987,9 +1075,15 @@ if [ "$ROLE" = "prod" ]; then
     echo "$FAILED check(s) failed. Fix them, and run ./setup.sh again."
     exit 1
   fi
-  echo "Done. $BOX_NAME is set up. Deploy Aldine to it from your laptop."
+  echo "Done. $BOX_NAME is set up. Deploy a release to it from your laptop:"
+  echo "  mise run box:deploy <box-tag> --box $USER@$BOX_NAME"
 else
+  check_aldine_settings
   echo
+  if [ "$FAILED" -gt 0 ]; then
+    echo "$FAILED check(s) failed. Fix them, and run ./setup.sh again."
+    exit 1
+  fi
   if [ ! -d "$BACKUP_DIR" ]; then
     echo "WARNING: no backup drive is mounted, so this box takes no backups."
     echo
