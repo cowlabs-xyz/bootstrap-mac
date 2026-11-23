@@ -33,8 +33,8 @@ ALDINE_DIR="$HOME/git/cowlabs/aldine"
 ALDINE_LOCAL="$ALDINE_DIR/mise.local.toml"
 
 # The settings of box-server, on every box. The agent ai.aldine.box-server
-# reads them with sh at each start, so each line is KEY=value. setup.sh writes
-# the file. See "Aldine settings" in the README.
+# reads them with sh at each start, so each setting is KEY=value. setup.sh
+# writes the file. See "Aldine settings" in the README.
 ALDINE_ENV="$HOME/.config/aldine/box.env"
 # box-server serves Aldine on this port on every box.
 ALDINE_PORT=5173

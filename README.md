@@ -65,10 +65,11 @@ Both roles add `brew shellenv` to `~/.zprofile`, so SSH sessions get the Homebre
 
 `setup.sh` writes the settings of `box-server` to `~/.config/aldine/box.env`, on both roles. The launchd agent `ai.aldine.box-server`, which a deploy installs, reads the file with `sh` each time it starts `box-server`.
 
-- Each line is `KEY=value`. A value with a space, such as the backup folder, is in single quotes.
+- `sh` reads the file. Each setting is `KEY=value`. A value with a space, such as the backup folder, is in single quotes.
 - The file has mode 600, as it holds the logo.dev key. Never put the file or a key in this repo.
-- A re-run writes the settings below again. It keeps every other line, such as a comment or `ALDINE_LOG_LEVEL=debug`. It does not replace the file if `sh` cannot read the result.
-- When a re-run changes the file, it restarts `ai.aldine.box-server` if the agent runs, so the new settings apply. The box finishes the running job first.
+- A re-run writes the settings below again. It keeps every other line, such as a comment or `ALDINE_LOG_LEVEL=debug`.
+- `setup.sh` stops at the start if `sh` cannot read the file. It also stops, and keeps the file, if the new file is not valid or changes another setting.
+- When a re-run changes the file, it restarts `ai.aldine.box-server` if the agent runs, so the new settings apply. The box finishes the running job first. The final check fails if the restart fails.
 
 | Setting | Customer box | Dev box |
 | --- | --- | --- |
