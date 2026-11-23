@@ -40,7 +40,7 @@ ALDINE_ENV="$HOME/.config/aldine/box.env"
 # The value of a setting in box.env, read the way the agent reads it, or nothing.
 box_env_value() {
   [ -f "$ALDINE_ENV" ] || return 0
-  /usr/bin/env -i /bin/sh -c 'set -a; . "$1" && /usr/bin/printenv "$2"' _ "$ALDINE_ENV" "$1" 2>/dev/null || true
+  /usr/bin/env -i HOME="$HOME" /bin/sh -c 'set -a; . "$1" && /usr/bin/printenv "$2"' _ "$ALDINE_ENV" "$1" 2>/dev/null || true
 }
 
 # The value of a setting in aldine's mise.local.toml, or nothing. Boxes set up
@@ -49,6 +49,13 @@ mise_local_value() {
   [ -f "$ALDINE_LOCAL" ] || return 0
   sed -n "s/^$1 *= *\"\(.*\)\"\$/\1/p" "$ALDINE_LOCAL" | tail -n 1
 }
+
+# An unreadable box.env reads as empty, and a re-run would then drop its
+# settings. Stop before the script changes anything.
+if [ -f "$ALDINE_ENV" ] && ! /bin/sh -n "$ALDINE_ENV" 2>/dev/null; then
+  echo "ERROR: sh cannot read $ALDINE_ENV. Fix the file, and run ./setup.sh again." >&2
+  exit 1
+fi
 
 # --- Inputs -------------------------------------------------------------
 # Every input comes first, so the rest runs with nobody at the keyboard. A
