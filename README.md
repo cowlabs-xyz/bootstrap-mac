@@ -65,7 +65,7 @@ Both roles add `brew shellenv` to `~/.zprofile`, so SSH sessions get the Homebre
 
 `setup.sh` writes the settings of `box-server` to `~/.config/aldine/box.env`, on both roles. The launchd agent `ai.aldine.box-server`, which a deploy installs, reads the file with `sh` each time it starts `box-server`.
 
-- `sh` reads the file. Each setting is `KEY=value`. A value with a space, such as the backup folder, is in single quotes.
+- `sh` reads the file. Each setting is `KEY=value`. A value with a space is in single quotes.
 - The file has mode 600, as it holds the logo.dev key. Never put the file or a key in this repo.
 - A re-run writes the settings below again. It keeps every other line, such as a comment or `ALDINE_LOG_LEVEL=debug`.
 - `setup.sh` stops at the start if `sh` cannot read the file. It also stops, and keeps the file, if the new file is not valid or changes another setting.
@@ -77,14 +77,15 @@ Both roles add `brew shellenv` to `~/.zprofile`, so SSH sessions get the Homebre
 | `ALDINE_DEPLOY_MODE` | not set, so the debug service is off | `dev`, which turns on the debug service |
 | `ALDINE_ADDR` | `127.0.0.1:5173` | `127.0.0.1:5173` |
 | `ALDINE_DATA_DIR` | `$HOME/aldine`, as an absolute path | the same, or the value in `mise.local.toml` |
-| `ALDINE_BACKUP_DIR` | `/Volumes/Aldine Backups`, when the box has a backup drive | the same |
 | `ALDINE_LOGO_DEV_SECRET_KEY` | the logo.dev key, when you give one | the value in `mise.local.toml`, when set |
 | `ALDINE_LOG_FORMAT` | `console` | `console` |
 | `ALDINE_LOG_LEVEL`, `ALDINE_OLLAMA_URL` | the value in `mise.local.toml`, when set and not in box.env yet | the same |
 
+`setup.sh` removes `ALDINE_BACKUP_DIR` from box.env, as Time Machine backs up the box. See [Time Machine](#time-machine).
+
 `setup.sh` also makes the data folder, as `box-server` does not. On both roles, it ends with a check of box.env: mode 600, the box id, the deploy mode, `ALDINE_ADDR` and the data folder. A deploy of aldine reads the box id from box.env. `box-server` reads the deploy mode from it.
 
-Boxes set up before box.env kept their settings in aldine's `mise.local.toml`. `setup.sh` reads the logo.dev key, the backup folder, `ALDINE_LOG_LEVEL` and `ALDINE_OLLAMA_URL` from it, when box.env does not have them. The dev box also reads the data folder from it. `setup.sh` prints each other `ALDINE_` setting in `mise.local.toml` that it does not carry over, such as the settings of the box watch, as `box-server` does not read them. The dev box keeps its `mise.local.toml` for the aldine tasks, such as the SSH host of the dev box. A customer box set up before keeps its clone and its deploy key. Delete both after the first deploy of a release: `rm -rf ~/git/cowlabs/aldine ~/.ssh/aldine_deploy*`, the `github.com-aldine` host in `~/.ssh/config`, and the deploy key on GitHub.
+Boxes set up before box.env kept their settings in aldine's `mise.local.toml`. `setup.sh` reads the logo.dev key, `ALDINE_LOG_LEVEL` and `ALDINE_OLLAMA_URL` from it, when box.env does not have them. The dev box also reads the data folder from it. `setup.sh` prints each other `ALDINE_` setting in `mise.local.toml` that it does not carry over, such as the settings of the box watch, as `box-server` does not read them. The dev box keeps its `mise.local.toml` for the aldine tasks, such as the SSH host of the dev box. A customer box set up before keeps its clone and its deploy key. Delete both after the first deploy of a release: `rm -rf ~/git/cowlabs/aldine ~/.ssh/aldine_deploy*`, the `github.com-aldine` host in `~/.ssh/config`, and the deploy key on GitHub.
 
 ### Roll out box.env to the dev box
 
@@ -111,8 +112,8 @@ at the start, then runs to the end with no other prompt:
 - the logo.dev secret key, for vendor logos. Leave it empty to skip.
 - the Tailscale auth key, tagged `tag:aldine-prod`, if the box is not on the
   tailnet yet.
-- the backup drive and the passphrase of its volume. See
-  [Backup drive](#backup-drive).
+- the Time Machine backup disk, which a person chooses in System Settings. See
+  [Time Machine](#time-machine).
 
 A re-run asks only for what is not set up yet.
 
@@ -125,37 +126,28 @@ A re-run asks only for what is not set up yet.
 - turns off automatic macOS updates and security responses, as both can
   restart the box. With FileVault on, a restart nobody expects leaves the box
   down until someone types the password. Apply updates by hand.
-- sets up the backup drive
-- writes `~/.config/aldine/box.env` with the box name as `ALDINE_BOX_ID`, the logo.dev key and `ALDINE_BACKUP_DIR`. A customer box has no debug service. See [Aldine settings](#aldine-settings).
+- removes the unlock agent of the old backup volume. See [Time Machine](#time-machine).
+- writes `~/.config/aldine/box.env` with the box name as `ALDINE_BOX_ID`, and the logo.dev key. A customer box has no debug service. See [Aldine settings](#aldine-settings).
 
-It ends with a check of each of these, of the backup volume, and of FileVault and Ollama. A failed check exits with an error: fix it, and run `./setup.sh` again. Then deploy a release to the box from your laptop, with `mise run box:deploy <tag> --box aldine@<box name>` in aldine.
+It ends with a check of each of these, of Time Machine, and of FileVault and Ollama. A failed check exits with an error: fix it, and run `./setup.sh` again. Then deploy a release to the box from your laptop, with `mise run box:deploy <tag> --box aldine@<box name>` in aldine.
 
 Before `setup.sh`, at the machine: create the `aldine` admin account, and turn
 on FileVault. Neither can be done from a script. `setup.sh` stops at the start
 if FileVault is off.
 
-## Backup drive
+## Time Machine
 
-Aldine backs up its database and files every night at about 2am to an external
-drive plugged into the box, and keeps the last 14 copies. Both roles set up the
-drive, so the dev box backs up the same way as a customer box.
+Time Machine backs up the box every hour to an external drive plugged into it. It backs up the whole Mac, with the Aldine data folder `~/aldine` in it. It runs as part of macOS, so it needs no permission that a deploy of Aldine resets.
 
-- `setup.sh` lists the APFS containers on external disks, and asks which one
-  is the backup drive. It adds an encrypted APFS volume, `Aldine Backups`, to
-  it. What the drive holds already stays. A drive that is not APFS must be
-  erased as APFS first, in Disk Utility. Leave the choice empty to skip. A
-  customer box needs its drive, so its final check then fails.
-- FileVault covers only the Mac's own disk, so the volume has a passphrase of
-  its own. Make it in 1Password first, titled `<box name> backup drive`, then
-  paste it. Give a copy to the customer, as with the FileVault recovery key.
-- The login keychain holds the passphrase. A launchd user agent,
-  `ai.aldine.backup-volume`, unlocks and mounts the volume at login
-  and every 5 minutes, so a drive that is plugged in again comes back. It logs
-  to `~/Library/Logs/ai.aldine.backup-volume.log`.
-- `ALDINE_BACKUP_DIR` in `~/.config/aldine/box.env` turns backups on, on both roles. `setup.sh` writes it. See [Aldine settings](#aldine-settings).
-- Spotlight does not index the volume.
+- `setup.sh` cannot choose the backup disk: `tmutil setdestination` needs Full Disk Access, and Terminal has none. When Time Machine has no disk, `setup.sh` opens System Settings > General > Time Machine, and waits. Type `skip` to go on with no disk. A customer box needs its backups, so its final check then fails.
+- In System Settings, click Add Backup Disk, and choose the drive. If Time Machine asks to erase it, erase it. Turn on Encrypt Backup, and keep the backup frequency at Automatically Every Hour.
+- FileVault covers only the Mac's own disk, so the backups have a password of their own. Make it in 1Password first, titled `<box name> Time Machine`, then paste it. Give a copy to the customer, as with the FileVault recovery key.
+- Time Machine keeps the password in the System keychain, and unlocks the drive by itself after a restart.
+- The final check fails when Time Machine has no disk on a customer box, when a backup volume is not encrypted, or when Time Machine leaves out the data folder. The dev box warns when it has no disk.
 
-On a new Mac with a drive that holds backups, `setup.sh` finds the volume, and asks for its passphrase from 1Password. Then deploy a release, and restore with `mise run box:restore` in aldine.
+To restore the data of Aldine from Time Machine, see "Restore a box from Time Machine" in the aldine README.
+
+Before Time Machine, box-server backed up every night to the encrypted volume `Aldine Backups` on the drive. `setup.sh` removes its unlock agent `ai.aldine.backup-volume`, its passphrase in the login keychain, and `ALDINE_BACKUP_DIR`. The volume stays on the drive until Time Machine erases it, or you delete it in Disk Utility.
 
 ## GitHub access
 
