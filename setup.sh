@@ -399,6 +399,18 @@ if defaults read MobileMeAccounts Accounts 2>/dev/null | grep -q AccountID; then
 fi
 
 ALDINE_URL="http://localhost:$ALDINE_PORT"
+# Where Chrome puts the app that its profile installs for Aldine.
+ALDINE_CHROME_APP="$HOME/Applications/Chrome Apps.localized/Aldine.app"
+# Whether Aldine answers on this Mac. Before the first deploy it does not.
+aldine_answers() {
+  curl -fsS -m 5 -o /dev/null "$ALDINE_URL/"
+}
+# Whether the Chrome profile on this Mac has the policy that installs Aldine as
+# an app. macOS writes the policies of an installed profile to Managed
+# Preferences. An older profile has no such policy.
+chrome_installs_aldine() {
+  sudo defaults read "/Library/Managed Preferences/$USER/com.google.Chrome" WebAppInstallForceList 2>/dev/null | grep -q "$ALDINE_URL/"
+}
 
 if [ "$ROLE" = "prod" ]; then
   echo "==> Chrome"
@@ -461,17 +473,47 @@ PREFS
     echo "    Make Chrome the default browser: confirm the macOS prompt, or pick it in"
     echo "    System Settings > Desktop & Dock > Default web browser."
   fi
+  # The Chrome profile installs Aldine as a Chrome app (WebAppInstallForceList).
+  # Chrome installs it when it runs with the policy and reaches Aldine, and it
+  # writes an app of its own for it. That app is what the Dock shows. Each case
+  # that stops the install says what to do.
+  if [ ! -d "$ALDINE_CHROME_APP" ] && chrome_profile_installed; then
+    if ! chrome_installs_aldine; then
+      open assets/chrome.mobileconfig || true
+      echo "    The Chrome profile on this Mac does not install Aldine as an app. Install the"
+      echo "    updated profile: System Settings > General > Device Management, open"
+      echo "    \"Aldine: Chrome\", and click Install. Then run ./setup.sh again."
+    elif ! aldine_answers; then
+      echo "    Aldine does not answer at $ALDINE_URL/ yet. Deploy it, then run ./setup.sh"
+      echo "    again, so that Chrome installs it as an app."
+    else
+      # Start Chrome hidden, so no window opens on the box. Close it again after
+      # the install, but only when this step started it.
+      CHROME_WAS_RUNNING=false
+      pgrep -x "Google Chrome" &>/dev/null && CHROME_WAS_RUNNING=true
+      open -gj -a "Google Chrome" || true
+      for _ in $(seq 1 45); do
+        [ -d "$ALDINE_CHROME_APP" ] && break
+        sleep 2
+      done
+      if [ -d "$ALDINE_CHROME_APP" ]; then
+        sleep 5
+        [ "$CHROME_WAS_RUNNING" = false ] && { killall "Google Chrome" &>/dev/null || true; }
+      else
+        echo "    Chrome did not install the Aldine app within 90 seconds. Run ./setup.sh again."
+      fi
+    fi
+  fi
 fi
 
 echo "==> Aldine app"
-# An app with the Aldine icon that opens Aldine in Chrome, for the Dock. A
-# re-run builds it again.
+# An app with the Aldine icon, for Launchpad and Spotlight. It opens the app
+# that Chrome installed for Aldine. A box without that app yet gets Aldine in a
+# Chrome window of its own, with no tabs and no address bar, until a re-run
+# finds the installed app. A re-run builds this app again.
 ALDINE_APP="/Applications/Aldine.app"
 sudo rm -rf "$ALDINE_APP"
-# --app opens Aldine in a window of its own, with no tabs and no address bar. -n
-# hands the flag to a Chrome that runs already, and a link to another site
-# still opens in a normal Chrome window.
-sudo osacompile -o "$ALDINE_APP" -e "do shell script \"open -na 'Google Chrome' --args --app=$ALDINE_URL/\""
+sudo osacompile -o "$ALDINE_APP" -e "do shell script \"if [ -d '$ALDINE_CHROME_APP' ]; then open '$ALDINE_CHROME_APP'; else open -na 'Google Chrome' --args --app=$ALDINE_URL/; fi\""
 # The icon follows the macOS icon style: default, dark, clear and tinted.
 # Assets.car holds it, and Aldine.icns is for older macOS. Both are compiled
 # from assets/aldine-icon/Aldine.icon. See the README to change the icon.
@@ -489,7 +531,13 @@ echo "==> Dock"
 dock_tile() {
   echo "<dict><key>tile-data</key><dict><key>file-data</key><dict><key>_CFURLString</key><string>$1</string><key>_CFURLStringType</key><integer>0</integer></dict></dict></dict>"
 }
-DOCK_APPS=("$ALDINE_APP" "/Applications/Google Chrome.app")
+# The tile is the app that Chrome installed, so the icon of the running app is
+# the Aldine tile. A tile for /Applications/Aldine.app would show a second icon,
+# as that app only starts the other one. Before the install, the tile is
+# /Applications/Aldine.app.
+ALDINE_DOCK_APP="$ALDINE_APP"
+[ -d "$ALDINE_CHROME_APP" ] && ALDINE_DOCK_APP="$ALDINE_CHROME_APP"
+DOCK_APPS=("$ALDINE_DOCK_APP" "/Applications/Google Chrome.app")
 [ "$ROLE" = "dev" ] && DOCK_APPS+=("/System/Applications/Utilities/Terminal.app")
 DOCK_APPS+=("/System/Applications/System Settings.app")
 DOCK_TILES=()
@@ -1128,6 +1176,14 @@ if [ "$ROLE" = "prod" ]; then
   check "Chrome opens Aldine" '[ -f "$CHROME_INITIAL" ] && [ -f "$CHROME_BOOKMARKS" ]'
   check "the Chrome profile blocks sign-in and data to Google" 'chrome_profile_installed'
   check "Chrome is the default browser" 'chrome_is_default'
+  # Chrome installs the app only once Aldine answers, so a setup before the first
+  # deploy skips these two checks.
+  if [ -d "$ALDINE_CHROME_APP" ] || aldine_answers; then
+    check "Chrome installed Aldine as an app" '[ -d "$ALDINE_CHROME_APP" ]'
+    check "the Dock opens Aldine as that app" 'defaults read com.apple.dock persistent-apps | grep -qE "Chrome(%20| )Apps\.localized/Aldine\.app"'
+  else
+    echo "    -       Aldine is not deployed yet, so Chrome has not installed it as an app. Deploy it, then run ./setup.sh again"
+  fi
   check "the Dock holds Chrome and System Settings" 'defaults read com.apple.dock persistent-apps | grep -qE "Google(%20| )Chrome\.app" && ! defaults read com.apple.dock persistent-apps | grep -q "Safari.app"'
   check "the user picture is the Aldine mark" '! dscl . -read "/Users/$USER" AvatarRepresentation 2>/dev/null | grep -q "^AvatarRepresentation" && [ "$(dscl . -read "/Users/$USER" Picture | tail -1 | sed "s/^Picture: //; s/^ //")" = "$USER_PICTURE" ]'
   check "the screen locks 5 seconds after the display sleeps" 'sysadminctl -screenLock status 2>&1 | grep -q "$SCREEN_LOCK_STATUS"'
