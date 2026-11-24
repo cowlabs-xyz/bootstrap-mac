@@ -791,7 +791,7 @@ else
   echo "    (got: ${OLLAMA_RUNNING:-nothing}). See ~/Library/Logs/$OLLAMA_LABEL.log"
 fi
 
-echo "==> Backups"
+echo "==> Old backup volume"
 # box-server took its own backups to the volume Aldine Backups until Time
 # Machine took over. Remove the agent that unlocked the volume, and its
 # passphrase. The volume stays on the drive until Time Machine erases it, or
@@ -811,11 +811,6 @@ if security find-generic-password -s "$OLD_BACKUP_LABEL" &>/dev/null; then
     security delete-generic-password -s "$OLD_BACKUP_LABEL" >/dev/null
   fi
   echo "    removed the passphrase of the volume Aldine Backups from the keychain"
-fi
-if [ -n "$TM_DISK" ]; then
-  echo "    Time Machine backs up to $TM_DISK"
-else
-  echo "    Time Machine has no backup disk: the box takes no backups"
 fi
 
 echo "==> Log rotation"
