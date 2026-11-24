@@ -76,23 +76,14 @@ Both roles add `brew shellenv` to `~/.zprofile`, so SSH sessions get the Homebre
 | `ALDINE_BOX_ID` | the box name, such as `acme-1` | `dev-box` |
 | `ALDINE_DEPLOY_MODE` | not set, so the debug service is off | `dev`, which turns on the debug service |
 | `ALDINE_ADDR` | `127.0.0.1:5173` | `127.0.0.1:5173` |
-| `ALDINE_DATA_DIR` | `$HOME/aldine`, as an absolute path | the same, or the value in `mise.local.toml` |
+| `ALDINE_DATA_DIR` | `$HOME/aldine`, as an absolute path | the same. To use another folder, add its absolute path to box.env by hand. A re-run keeps it |
 | `ALDINE_BACKUP_DIR` | `/Volumes/Aldine Backups`, when the box has a backup drive | the same |
-| `ALDINE_LOGO_DEV_SECRET_KEY` | the logo.dev key, when you give one | the value in `mise.local.toml`, when set |
+| `ALDINE_LOGO_DEV_SECRET_KEY` | the logo.dev key, when you give one | not set. Add it to box.env by hand. A re-run keeps it |
 | `ALDINE_LOG_FORMAT` | `console` | `console` |
-| `ALDINE_LOG_LEVEL`, `ALDINE_OLLAMA_URL` | the value in `mise.local.toml`, when set and not in box.env yet | the same |
 
 `setup.sh` also makes the data folder, as `box-server` does not. On both roles, it ends with a check of box.env: mode 600, the box id, the deploy mode, `ALDINE_ADDR` and the data folder. A deploy of aldine reads the box id from box.env. `box-server` reads the deploy mode from it.
 
-Boxes set up before box.env kept their settings in aldine's `mise.local.toml`. `setup.sh` reads the logo.dev key, the backup folder, `ALDINE_LOG_LEVEL` and `ALDINE_OLLAMA_URL` from it, when box.env does not have them. The dev box also reads the data folder from it. `setup.sh` prints each other `ALDINE_` setting in `mise.local.toml` that it does not carry over, such as the settings of the box watch, as `box-server` does not read them. The dev box keeps its `mise.local.toml` for the aldine tasks, such as the SSH host of the dev box. A customer box set up before keeps its clone and its deploy key. Delete both after the first deploy of a release: `rm -rf ~/git/cowlabs/aldine ~/.ssh/aldine_deploy*`, the `github.com-aldine` host in `~/.ssh/config`, and the deploy key on GitHub.
-
-### Roll out box.env to the dev box
-
-A deploy to the dev box reads box.env. Do the steps in this order:
-
-1. Merge the bootstrap-mac change that writes box.env.
-2. On the dev box, run `cd ~/git/cowlabs/bootstrap-mac && git pull && ./setup.sh`. It writes `~/.config/aldine/box.env` and checks it.
-3. Merge aldine #275 to #279. Wait for the check of the push to main. Then run `mise run box:deploy` from a laptop. Nothing deploys on merge.
+The dev box keeps aldine's `mise.local.toml` for the settings of the box watch, `ALDINE_WATCH_BOXES` and `ALDINE_SLACK_WEBHOOK_URL`. `setup.sh` does not read it.
 
 ### mise tasks
 
