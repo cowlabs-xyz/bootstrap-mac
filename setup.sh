@@ -33,22 +33,49 @@ ALDINE_DIR="$HOME/git/cowlabs/aldine"
 ALDINE_LOCAL="$ALDINE_DIR/mise.local.toml"
 
 # The settings of box-server, on every box. The agent ai.aldine.box-server
-# reads them with sh at each start, so each line is KEY=value. setup.sh writes
-# the file. See "Aldine settings" in the README.
+# reads them with sh at each start, so each setting is KEY=value. setup.sh
+# writes the file. See "Aldine settings" in the README.
 ALDINE_ENV="$HOME/.config/aldine/box.env"
+# box-server serves Aldine on this port on every box.
+ALDINE_PORT=5173
+ALDINE_ADDR="127.0.0.1:$ALDINE_PORT"
+
+# Runs sh with the variables that a value in box.env can use under the agent.
+agent_sh() {
+  /usr/bin/env -i HOME="$HOME" USER="$USER" LOGNAME="${LOGNAME:-$USER}" /bin/sh -c "$@"
+}
 
 # The value of a setting in box.env, read the way the agent reads it, or nothing.
 box_env_value() {
   [ -f "$ALDINE_ENV" ] || return 0
-  /usr/bin/env -i /bin/sh -c 'set -a; . "$1" && /usr/bin/printenv "$2"' _ "$ALDINE_ENV" "$1" 2>/dev/null || true
+  agent_sh 'set -a; . "$1" && /usr/bin/printenv "$2"' _ "$ALDINE_ENV" "$1" 2>/dev/null || true
 }
 
 # The value of a setting in aldine's mise.local.toml, or nothing. Boxes set up
-# before box.env kept their settings there.
+# before box.env kept their settings there. The value can be in double or
+# single quotes, and a comment can follow it.
 mise_local_value() {
   [ -f "$ALDINE_LOCAL" ] || return 0
-  sed -n "s/^$1 *= *\"\(.*\)\"\$/\1/p" "$ALDINE_LOCAL" | tail -n 1
+  sed -nE "s/^[[:space:]]*$1[[:space:]]*=[[:space:]]*\"([^\"]*)\"[[:space:]]*(#.*)?\$/\1/p; s/^[[:space:]]*$1[[:space:]]*=[[:space:]]*'([^']*)'[[:space:]]*(#.*)?\$/\1/p" "$ALDINE_LOCAL" | tail -n 1
 }
+
+# The value of a setting: from box.env, else from mise.local.toml.
+aldine_setting() {
+  local value
+  value="$(box_env_value "$1")"
+  if [ -n "$value" ]; then
+    printf '%s\n' "$value"
+  else
+    mise_local_value "$1"
+  fi
+}
+
+# An unreadable box.env reads as empty, and a re-run would then drop its
+# settings. Stop before the script changes anything.
+if [ -f "$ALDINE_ENV" ] && ! /bin/sh -n "$ALDINE_ENV" 2>/dev/null; then
+  echo "ERROR: sh cannot read $ALDINE_ENV. Fix the file, and run ./setup.sh again." >&2
+  exit 1
+fi
 
 # --- Inputs -------------------------------------------------------------
 # Every input comes first, so the rest runs with nobody at the keyboard. A
@@ -106,8 +133,7 @@ if [ "$ROLE" = "prod" ]; then
 
   # The key for vendor logos. It goes in box.env, never in this public repo. A
   # box set up before box.env kept it in aldine's mise.local.toml.
-  LOGO_DEV_KEY="$(box_env_value ALDINE_LOGO_DEV_SECRET_KEY)"
-  [ -n "$LOGO_DEV_KEY" ] || LOGO_DEV_KEY="$(mise_local_value ALDINE_LOGO_DEV_SECRET_KEY)"
+  LOGO_DEV_KEY="$(aldine_setting ALDINE_LOGO_DEV_SECRET_KEY)"
   if [ -n "$LOGO_DEV_KEY" ]; then
     echo "    logo.dev key: already set"
   else
@@ -238,10 +264,10 @@ fi
 
 # The deploy key for the aldine clone of a dev box. It is the last input, as a
 # person adds it on GitHub. A customer box has no clone, so it has no key.
-DEPLOY_KEY="$HOME/.ssh/aldine_deploy"
-SSH_ALIAS="github.com-aldine"
-
 if [ "$ROLE" = "dev" ]; then
+  DEPLOY_KEY="$HOME/.ssh/aldine_deploy"
+  SSH_ALIAS="github.com-aldine"
+
   # A deploy key reaches aldine and nothing else, so this machine holds no
   # account-wide GitHub credential. It lives behind a Host alias, so plain
   # github.com stays free for a forwarded agent (ssh -A) to serve.
@@ -372,8 +398,7 @@ if defaults read MobileMeAccounts Accounts 2>/dev/null | grep -q AccountID; then
   echo "    WARNING: this Mac is signed in to an Apple ID. Sign out in System Settings."
 fi
 
-# box-server serves Aldine on this port on every box: ALDINE_ADDR in box.env.
-ALDINE_URL="http://localhost:5173"
+ALDINE_URL="http://localhost:$ALDINE_PORT"
 
 if [ "$ROLE" = "prod" ]; then
   echo "==> Chrome"
@@ -912,11 +937,12 @@ if [ "$ROLE" = "dev" ]; then
 fi
 
 echo "==> Aldine settings"
-# box.env belongs to setup.sh: a re-run writes the settings below again. A line
-# that sets any other variable, such as ALDINE_LOG_LEVEL, stays. The values come
-# from the inputs, then from box.env, then from aldine's mise.local.toml, where
-# boxes set up before box.env kept them.
-ALDINE_ENV_KEYS="ALDINE_BOX_ID|ALDINE_DEPLOY_MODE|ALDINE_ADDR|ALDINE_DATA_DIR|ALDINE_BACKUP_DIR|ALDINE_LOGO_DEV_SECRET_KEY|ALDINE_LOG_FORMAT"
+# box.env belongs to setup.sh: a re-run writes the settings below again. Every
+# other line stays, such as a comment or ALDINE_LOG_LEVEL. The values come from
+# the inputs, then from box.env, then from aldine's mise.local.toml, where boxes
+# set up before box.env kept them.
+ALDINE_ENV_HEADER="# Written by bootstrap-mac setup.sh. A re-run writes the ALDINE_ settings that setup.sh sets, and keeps other lines."
+ALDINE_ENV_SETS='^[[:space:]]*(export[[:space:]]+)?'
 ALDINE_DATA_DIR="$HOME/aldine"
 ALDINE_BACKUP_SET=""
 if [ "$ROLE" = "prod" ]; then
@@ -932,19 +958,19 @@ else
   # The dev box runs as dev-box, with the debug service on.
   ALDINE_BOX_ID="dev-box"
   ALDINE_DEPLOY_MODE="dev"
+  # The first absolute path. A relative path in box.env must not hide the real
+  # folder in mise.local.toml.
   for value in "$(box_env_value ALDINE_DATA_DIR)" "$(mise_local_value ALDINE_DATA_DIR)"; do
     if [[ "$value" == /* ]]; then
       ALDINE_DATA_DIR="$value"
       break
     fi
   done
-  LOGO_DEV_KEY="$(box_env_value ALDINE_LOGO_DEV_SECRET_KEY)"
-  [ -n "$LOGO_DEV_KEY" ] || LOGO_DEV_KEY="$(mise_local_value ALDINE_LOGO_DEV_SECRET_KEY)"
+  LOGO_DEV_KEY="$(aldine_setting ALDINE_LOGO_DEV_SECRET_KEY)"
   if [ -n "$BACKUP_UUID" ]; then
     ALDINE_BACKUP_SET="$BACKUP_DIR"
   else
-    ALDINE_BACKUP_SET="$(box_env_value ALDINE_BACKUP_DIR)"
-    [ -n "$ALDINE_BACKUP_SET" ] || ALDINE_BACKUP_SET="$(mise_local_value ALDINE_BACKUP_DIR)"
+    ALDINE_BACKUP_SET="$(aldine_setting ALDINE_BACKUP_DIR)"
   fi
 fi
 
@@ -956,6 +982,25 @@ env_line() {
     *) printf '%s=%s\n' "$1" "$2" ;;
   esac
 }
+
+# A setting that setup.sh owns. An empty value leaves the setting out of
+# box.env. This is the only list of these settings.
+ALDINE_ENV_KEYS=""
+ALDINE_ENV_LINES=""
+managed_setting() {
+  ALDINE_ENV_KEYS+="${ALDINE_ENV_KEYS:+|}$1"
+  if [ -n "$2" ]; then
+    ALDINE_ENV_LINES+="$(env_line "$1" "$2")"$'\n'
+  fi
+}
+managed_setting ALDINE_BOX_ID "$ALDINE_BOX_ID"
+managed_setting ALDINE_DEPLOY_MODE "$ALDINE_DEPLOY_MODE"
+managed_setting ALDINE_ADDR "$ALDINE_ADDR"
+managed_setting ALDINE_DATA_DIR "$ALDINE_DATA_DIR"
+managed_setting ALDINE_BACKUP_DIR "$ALDINE_BACKUP_SET"
+managed_setting ALDINE_LOGO_DEV_SECRET_KEY "$LOGO_DEV_KEY"
+managed_setting ALDINE_LOG_FORMAT console
+
 # The other settings that box-server reads. A box set up before box.env kept
 # them in mise.local.toml: setup.sh adds them to box.env once, and box.env
 # keeps them as other lines. The settings of the box watch, such as
@@ -964,42 +1009,67 @@ ALDINE_CARRY_KEYS="ALDINE_LOG_LEVEL ALDINE_OLLAMA_URL"
 ALDINE_CARRY_LINES=""
 for key in $ALDINE_CARRY_KEYS; do
   value="$(mise_local_value "$key")"
-  if [ -n "$value" ] && ! grep -qE "^$key=" "$ALDINE_ENV" 2>/dev/null; then
+  if [ -n "$value" ] && ! grep -qE "$ALDINE_ENV_SETS$key=" "$ALDINE_ENV" 2>/dev/null; then
     ALDINE_CARRY_LINES+="$(env_line "$key" "$value")"$'\n'
   fi
 done
-ALDINE_NOT_CARRIED="$(sed -n 's/^\(ALDINE_[A-Za-z0-9_]*\) *=.*/\1/p' "$ALDINE_LOCAL" 2>/dev/null | grep -vE "^($ALDINE_ENV_KEYS|${ALDINE_CARRY_KEYS// /|})\$" | sort -u | tr '\n' ' ' || true)"
+ALDINE_LOCAL_KEYS="$(sed -nE 's/^[[:space:]]*(ALDINE_[A-Za-z0-9_]*)[[:space:]]*=.*/\1/p' "$ALDINE_LOCAL" 2>/dev/null | sort -u || true)"
+ALDINE_NOT_CARRIED="$(printf '%s\n' "$ALDINE_LOCAL_KEYS" | grep -vE "^($ALDINE_ENV_KEYS|${ALDINE_CARRY_KEYS// /|})\$" | tr '\n' ' ' || true)"
 if [ -n "$ALDINE_NOT_CARRIED" ]; then
   echo "    not carried over from mise.local.toml, as box-server does not read them: $ALDINE_NOT_CARRIED"
 fi
+# A setting that setup.sh takes from mise.local.toml, with a value that it
+# cannot read, such as one with an escaped quote. box.env does not get it.
+for key in ALDINE_DATA_DIR ALDINE_BACKUP_DIR ALDINE_LOGO_DEV_SECRET_KEY $ALDINE_CARRY_KEYS; do
+  if printf '%s\n' "$ALDINE_LOCAL_KEYS" | grep -qxF "$key" && [ -z "$(mise_local_value "$key")" ] && [ -z "$(box_env_value "$key")" ]; then
+    echo "    WARNING: $key in mise.local.toml is empty, or setup.sh cannot read it. Add it to $ALDINE_ENV by hand."
+  fi
+done
+# The variables that a file sets, other than the ones setup.sh writes. A re-run
+# must not change them.
+env_file_others() {
+  local keys
+  read -ra keys <<< "${ALDINE_ENV_KEYS//|/ } $ALDINE_CARRY_KEYS"
+  agent_sh 'file="$1"; shift; set -a; . "$file"; set +a; unset file "$@"; /usr/bin/env -0 | /usr/bin/sort -z | /usr/bin/tr "\000" "\001"' _ "$1" "${keys[@]}" 2>/dev/null
+}
 ALDINE_ENV_WANT="$(
-  echo "# Written by bootstrap-mac setup.sh. A re-run writes the ALDINE_ settings that setup.sh sets, and keeps other lines."
-  env_line ALDINE_BOX_ID "$ALDINE_BOX_ID"
-  [ -z "$ALDINE_DEPLOY_MODE" ] || env_line ALDINE_DEPLOY_MODE "$ALDINE_DEPLOY_MODE"
-  env_line ALDINE_ADDR "127.0.0.1:5173"
-  env_line ALDINE_DATA_DIR "$ALDINE_DATA_DIR"
-  [ -z "$ALDINE_BACKUP_SET" ] || env_line ALDINE_BACKUP_DIR "$ALDINE_BACKUP_SET"
-  [ -z "$LOGO_DEV_KEY" ] || env_line ALDINE_LOGO_DEV_SECRET_KEY "$LOGO_DEV_KEY"
-  env_line ALDINE_LOG_FORMAT console
-  printf '%s' "$ALDINE_CARRY_LINES"
-  grep -E '^[A-Za-z_][A-Za-z0-9_]*=' "$ALDINE_ENV" 2>/dev/null | grep -vE "^($ALDINE_ENV_KEYS)=" || true
+  echo "$ALDINE_ENV_HEADER"
+  printf '%s' "$ALDINE_ENV_LINES$ALDINE_CARRY_LINES"
+  grep -vE "$ALDINE_ENV_SETS($ALDINE_ENV_KEYS)=" "$ALDINE_ENV" 2>/dev/null | grep -vxF "$ALDINE_ENV_HEADER" || true
 )"
 mkdir -p "$(dirname "$ALDINE_ENV")"
 chmod 700 "$(dirname "$ALDINE_ENV")"
+# box-server does not make its data folder, so make it before the restart below.
+mkdir -p "$ALDINE_DATA_DIR"
+ALDINE_RESTART=""
 if [ "$(cat "$ALDINE_ENV" 2>/dev/null)" != "$ALDINE_ENV_WANT" ]; then
   ( umask 077 && printf '%s\n' "$ALDINE_ENV_WANT" > "$ALDINE_ENV.tmp" )
+  # The agent cannot start box-server from a file that sh cannot read.
+  if ! /bin/sh -n "$ALDINE_ENV.tmp" 2>/dev/null; then
+    rm -f "$ALDINE_ENV.tmp"
+    echo "ERROR: the new $ALDINE_ENV is not valid for sh. The file did not change." >&2
+    exit 1
+  fi
+  # A line of a multi-line value can look like a managed setting.
+  if [ -f "$ALDINE_ENV" ] && [ "$(env_file_others "$ALDINE_ENV")" != "$(env_file_others "$ALDINE_ENV.tmp")" ]; then
+    rm -f "$ALDINE_ENV.tmp"
+    echo "ERROR: a re-run would change another setting in $ALDINE_ENV. Put each value on one line. The file did not change." >&2
+    exit 1
+  fi
   mv "$ALDINE_ENV.tmp" "$ALDINE_ENV"
   # box-server reads the file only when it starts. A box that runs it now
   # restarts it, so a new setting applies. The box finishes the running job
   # first, which can take up to 15 minutes.
   if launchctl print "gui/$(id -u)/ai.aldine.box-server" &>/dev/null; then
     echo "    the settings changed: restarting box-server"
-    launchctl kickstart -k "gui/$(id -u)/ai.aldine.box-server" || true
+    if launchctl kickstart -k "gui/$(id -u)/ai.aldine.box-server"; then
+      ALDINE_RESTART=ok
+    else
+      ALDINE_RESTART=failed
+    fi
   fi
 fi
 chmod 600 "$ALDINE_ENV"
-# box-server does not make its data folder.
-mkdir -p "$ALDINE_DATA_DIR"
 echo "    $ALDINE_ENV: box id $ALDINE_BOX_ID"
 
 echo
@@ -1016,6 +1086,11 @@ check() {
 # The settings in box.env, on both roles. A deploy of aldine reads the box id
 # and the deploy mode from box.env.
 check_aldine_settings() {
+  # A re-run does not restart box-server when box.env is the same, so the check
+  # names the command to run by hand.
+  if [ -n "$ALDINE_RESTART" ]; then
+    check "box-server restarted with the new settings (if not, run: launchctl kickstart -k gui/$(id -u)/ai.aldine.box-server)" '[ "$ALDINE_RESTART" = ok ]'
+  fi
   check "only $USER reads the Aldine settings" '[ "$(stat -f %Lp "$ALDINE_ENV")" = 600 ]'
   check "the box id is $ALDINE_BOX_ID" '[ "$(box_env_value ALDINE_BOX_ID)" = "$ALDINE_BOX_ID" ]'
   if [ -n "$ALDINE_DEPLOY_MODE" ]; then
@@ -1023,7 +1098,7 @@ check_aldine_settings() {
   else
     check "the debug service is off" '[ -z "$(box_env_value ALDINE_DEPLOY_MODE)" ]'
   fi
-  check "Aldine serves on localhost:5173" '[ "$(box_env_value ALDINE_ADDR)" = 127.0.0.1:5173 ]'
+  check "Aldine serves on localhost:$ALDINE_PORT" '[ "$(box_env_value ALDINE_ADDR)" = "$ALDINE_ADDR" ]'
   check "the data folder $ALDINE_DATA_DIR is there" '[ "$(box_env_value ALDINE_DATA_DIR)" = "$ALDINE_DATA_DIR" ] && [ -d "$ALDINE_DATA_DIR" ]'
   if [ -n "$(box_env_value ALDINE_LOGO_DEV_SECRET_KEY)" ]; then
     echo "    ok      the logo.dev key is set"
