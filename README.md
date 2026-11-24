@@ -331,6 +331,7 @@ Aldine opens from the Dock as an app of its own, in a window with no tabs and no
 
 - The Chrome profile has the policy `WebAppInstallForceList` for `http://localhost:5173/`, with `default_launch_container` set to `window`. Chrome installs Aldine as an app when it runs with the profile and reaches Aldine. The manifest of the web app is `box-web/public/site.webmanifest` in aldine.
 - Chrome writes the app to `~/Applications/Chrome Apps.localized/Aldine.app`. The Dock tile is that app, so the Dock shows Aldine running, not Chrome.
+- `setup.sh` waits up to 5 minutes for a person to install the profile, and up to 30 seconds for macOS to write its policy. After that, it does the steps below in the same run, so the Dock tile is the installed app and the checks pass. If the profile does not appear in time, it says to run setup again.
 - `setup.sh` starts Chrome hidden when the profile is installed and the app is not, waits up to 90 seconds for the app, and closes Chrome again. It does this only when the profile has the policy and Aldine answers. Otherwise it prints what to do: install the updated profile, or deploy Aldine and run setup again.
 - A setup before the first deploy skips the two checks of the app, as Chrome cannot install Aldine before it answers.
 - `/Applications/Aldine.app` opens the installed app, for Launchpad and Spotlight. Before the install it opens Aldine in a Chrome window with `--app`.
