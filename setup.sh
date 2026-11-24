@@ -468,7 +468,10 @@ echo "==> Aldine app"
 # re-run builds it again.
 ALDINE_APP="/Applications/Aldine.app"
 sudo rm -rf "$ALDINE_APP"
-sudo osacompile -o "$ALDINE_APP" -e "do shell script \"open -a 'Google Chrome' $ALDINE_URL/\""
+# --app opens Aldine in a window of its own, with no tabs and no address bar. -n
+# hands the flag to a Chrome that runs already, and a link to another site
+# still opens in a normal Chrome window.
+sudo osacompile -o "$ALDINE_APP" -e "do shell script \"open -na 'Google Chrome' --args --app=$ALDINE_URL/\""
 # The icon follows the macOS icon style: default, dark, clear and tinted.
 # Assets.car holds it, and Aldine.icns is for older macOS. Both are compiled
 # from assets/aldine-icon/Aldine.icon. See the README to change the icon.

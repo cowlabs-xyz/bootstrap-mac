@@ -335,7 +335,7 @@ To read the logs of a box from your laptop, run `mise run box:logs --box <host>`
 
 ## Aldine app icon
 
-`setup.sh` builds `/Applications/Aldine.app`, which opens Aldine in Chrome. Its icon follows the macOS icon style: default, dark, clear and tinted.
+`setup.sh` builds `/Applications/Aldine.app`, which opens Aldine in a Chrome window of its own, with no tabs and no address bar. Its icon follows the macOS icon style: default, dark, clear and tinted.
 
 - `assets/aldine-icon/Aldine.icon` is the source, in the format of Icon Composer. The background is Forest `#2a3b2b`, or `#181715` in dark mode. The mark is Sage `#aac2af`.
 - `assets/aldine-icon/Assets.car` and `Aldine.icns` are compiled from it. `setup.sh` copies them into the app.
