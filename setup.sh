@@ -854,8 +854,10 @@ EOF
   done
   if [ -d "$BACKUP_DIR" ]; then
     # Keep the permissions that box-server sets, and keep Spotlight out of the
-    # backups.
+    # backups. A new volume belongs to root, and ownership is on, so the user
+    # who runs box-server must own it, or the nightly backup cannot write.
     sudo diskutil enableOwnership "$BACKUP_DIR" >/dev/null
+    sudo chown "$USER":staff "$BACKUP_DIR"
     sudo mdutil -i off "$BACKUP_DIR" >/dev/null
     echo "    $BACKUP_DIR is mounted"
   else
