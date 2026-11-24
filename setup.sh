@@ -400,10 +400,26 @@ PREFS
   chrome_profile_installed() {
     sudo profiles show -type configuration 2>/dev/null | grep -q "$CHROME_PROFILE_ID"
   }
+  # Wait until a command succeeds, for at most $1 seconds. Poll every 3 seconds.
+  wait_until() {
+    local seconds=$1
+    shift
+    local waited=0
+    until "$@"; do
+      [ "$waited" -ge "$seconds" ] && return 1
+      sleep 3
+      waited=$((waited + 3))
+    done
+  }
+  # A person installs the profile while setup waits, so the same run can set up
+  # the Chrome app and the Dock after that.
+  PROFILE_WAIT=300
   if ! chrome_profile_installed; then
     open assets/chrome.mobileconfig || true
     echo "    Install the Chrome profile: System Settings > General > Device Management,"
-    echo "    open \"Aldine: Chrome\", and click Install. Then run ./setup.sh again."
+    echo "    open \"Aldine: Chrome\", and click Install."
+    echo "    Setup waits up to $PROFILE_WAIT seconds for the profile."
+    wait_until "$PROFILE_WAIT" chrome_profile_installed || echo "    The Chrome profile is not installed yet. Run ./setup.sh again after you install it."
   fi
   # macOS asks a person to confirm a new default browser. Chrome asks on its
   # first run, so open it.
@@ -420,11 +436,17 @@ PREFS
   # writes an app of its own for it. That app is what the Dock shows. Each case
   # that stops the install says what to do.
   if [ ! -d "$ALDINE_CHROME_APP" ] && chrome_profile_installed; then
-    if ! chrome_installs_aldine; then
+    # macOS writes the policies a short time after it installs the profile.
+    if ! chrome_installs_aldine && ! wait_until 30 chrome_installs_aldine; then
       open assets/chrome.mobileconfig || true
       echo "    The Chrome profile on this Mac does not install Aldine as an app. Install the"
       echo "    updated profile: System Settings > General > Device Management, open"
-      echo "    \"Aldine: Chrome\", and click Install. Then run ./setup.sh again."
+      echo "    \"Aldine: Chrome\", and click Install."
+      echo "    Setup waits up to $PROFILE_WAIT seconds for the policy."
+      wait_until "$PROFILE_WAIT" chrome_installs_aldine || echo "    The policy is not installed yet. Run ./setup.sh again after you install the profile."
+    fi
+    if ! chrome_installs_aldine; then
+      : # The messages above say what to do.
     elif ! aldine_answers; then
       echo "    Aldine does not answer at $ALDINE_URL/ yet. Deploy it, then run ./setup.sh"
       echo "    again, so that Chrome installs it as an app."
