@@ -135,6 +135,18 @@ Before `setup.sh`, at the machine: create the `aldine` admin account, and turn
 on FileVault. Neither can be done from a script. `setup.sh` stops at the start
 if FileVault is off.
 
+## Update macOS on a box
+
+A customer box installs no macOS update by itself. `setup.sh` turns off `AutomaticallyInstallMacOSUpdates` and `CriticalUpdateInstall`, and its final check confirms both. A box still checks for updates and downloads them. A background update of security data (`ConfigDataInstall`, such as XProtect) stays on, as it does not restart the Mac. We update a box by hand:
+
+- Install the update on the dev box first. Use it for a few days, and confirm that Aldine, Ollama and Tailscale work.
+- Stay within the major versions the dev box already runs. Do not move a box to a new major version before the dev box has run it.
+- Tell the customer when the box restarts. Choose a time outside office hours.
+- Update at the box, or over Screen Sharing. Run `mise run box:screen --box <box>` in the aldine repo. Open System Settings > General > Software Update, and install the update.
+- After the restart, the box stops at the FileVault screen. Type the password of the box account. The box is offline until then.
+- Run `./setup.sh` again. Check that it ends with "Done". The final check fails if the update turned automatic installs back on.
+- Check that Aldine opens in Chrome on the box and that `tailscale status` shows the box online.
+
 ## Time Machine
 
 Time Machine backs up the box every hour to an external drive plugged into it. It backs up the whole Mac, with the Aldine data folder `~/aldine` in it. It runs as part of macOS, so it needs no permission that a deploy of Aldine resets.
