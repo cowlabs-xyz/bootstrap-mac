@@ -41,7 +41,7 @@ unless you pass `--macos`, which reboots.
 - `bootstrap.sh` — curl-able entry point (Homebrew + clone + hand-off)
 - `update.sh` — routine updates: this repo, Homebrew, the toolchain, macOS
 - `setup.sh` — main setup: `brew bundle`, macOS defaults, security lockdown, Siri, analytics, AirDrop and Handoff off, the bundled App Store apps removed, Google Chrome, an Aldine app that opens Aldine as a Chrome app, a Dock with Aldine, Chrome and System Settings (and Terminal on dev), the Aldine mark as the desktop picture and the user picture (images in `assets/`; the desktop picture needs a logged-in session),
-  headless server behaviour, Remote Login (SSH), Tailscale, Ollama, log rotation, the Aldine settings in `~/.config/aldine/box.env`
+  headless server behaviour, Remote Login (SSH), Screen Sharing for the box user only, Tailscale, Ollama, log rotation, the Aldine settings in `~/.config/aldine/box.env`
 - `rotate-logs.sh` — rotates the Aldine and Ollama logs; `setup.sh` installs it
 - `Brewfile` — packages for all machines
 - `Brewfile.dev` — development toolchain, dev role only, mise included
@@ -280,6 +280,16 @@ If that ever fails, turn Remote Login on by hand in System Settings → General 
 Sharing. Run the first setup at the machine itself, since SSH is not available
 until this step succeeds.
 
+## Screen Sharing
+
+`setup.sh` turns on Screen Sharing on both roles, for the box user only.
+
+- It enables the `com.apple.screensharing` LaunchDaemon through `launchctl`, as it does for Remote Login.
+- The `com.apple.access_screensharing` group holds the box user and nobody else. This is "Only these users".
+- `ScreenSharingReqPermEnabled` and `VNCLegacyConnectionsEnabled` in `/Library/Preferences/com.apple.RemoteManagement` are false. They turn off "Anyone may request permission to control screen" and "VNC viewers may control screen with password".
+- If the result is not as wanted, setup prints the clicks for System Settings > General > Sharing, and waits.
+- The final check confirms all of this. It runs the same way over SSH and at the machine.
+
 ## Ollama
 
 Ollama is the official release build, `ollama-darwin.tgz` from
@@ -366,7 +376,6 @@ mv out/Assets.car out/Aldine.icns . && rm -r out
 - Enable auto-login, so the Ollama agent restarts after an unattended reboot.
   Ollama runs as a user agent, not a system daemon, because Metal GPU access
   needs a login session; as a root daemon it would fall back to the CPU.
-- Enable Screen Sharing in System Settings → General → Sharing, if wanted
 
 A deploy of aldine pulls the Ollama models. A customer box has FileVault on, so
 it has no auto-login: after a restart, someone types the password.
