@@ -40,7 +40,7 @@ unless you pass `--macos`, which reboots.
 
 - `bootstrap.sh` — curl-able entry point (Homebrew + clone + hand-off)
 - `update.sh` — routine updates: this repo, Homebrew, the toolchain, macOS
-- `setup.sh` — main setup: `brew bundle`, macOS defaults, security lockdown, Siri, analytics, AirDrop and Handoff off, the bundled App Store apps removed, Google Chrome, an Aldine app that opens Aldine in Chrome, a Dock with Aldine, Chrome and System Settings (and Terminal on dev), the Aldine mark as the desktop picture and the user picture (images in `assets/`; the desktop picture needs a logged-in session),
+- `setup.sh` — main setup: `brew bundle`, macOS defaults, security lockdown, Siri, analytics, AirDrop and Handoff off, the bundled App Store apps removed, Google Chrome, an Aldine app that opens Aldine as a Chrome app, a Dock with Aldine, Chrome and System Settings (and Terminal on dev), the Aldine mark as the desktop picture and the user picture (images in `assets/`; the desktop picture needs a logged-in session),
   headless server behaviour, Remote Login (SSH), Tailscale, Ollama, log rotation, the Aldine settings in `~/.config/aldine/box.env`
 - `rotate-logs.sh` — rotates the Aldine and Ollama logs; `setup.sh` installs it
 - `Brewfile` — packages for all machines
@@ -120,7 +120,7 @@ A re-run asks only for what is not set up yet.
 
 - sets the hostname and the Tailscale machine name to the box name
 - joins the office wifi
-- makes Aldine the start page of Chrome and a bookmark. A configuration profile, `assets/chrome.mobileconfig`, blocks sign-in to a Google profile, search suggestions and usage statistics. A person installs the profile in System Settings, and confirms Chrome as the default browser.
+- makes Aldine the start page of Chrome and a bookmark. A configuration profile, `assets/chrome.mobileconfig`, blocks sign-in to a Google profile, search suggestions and usage statistics. It also makes Chrome install Aldine as an app (`WebAppInstallForceList`). A person installs the profile in System Settings, and confirms Chrome as the default browser. See [Aldine as an app](#aldine-as-an-app).
 - locks the screen 5 seconds after the display sleeps. It asks for the password of the box user.
 - turns off automatic macOS updates and security responses, as both can
   restart the box. With FileVault on, a restart nobody expects leaves the box
@@ -333,9 +333,26 @@ Each Aldine and Ollama agent logs to `~/Library/Logs/ai.aldine.*.log`. A launchd
 
 To read the logs of a box from your laptop, run `mise run box:logs --box <host>` in aldine.
 
+## Aldine as an app
+
+Aldine opens from the Dock as an app of its own, with its own icon and a window with no tabs and no address bar.
+
+- The Chrome profile has the policy `WebAppInstallForceList` for `http://localhost:5173/`, with `default_launch_container` set to `window`. Chrome installs Aldine as an app when it runs with the profile and reaches Aldine. The manifest of the web app is `box-web/public/site.webmanifest` in aldine.
+- Chrome writes the app to `~/Applications/Chrome Apps.localized/Aldine.app`. The Dock tile is that app, so the icon of the running app is the Aldine tile.
+- `setup.sh` starts Chrome hidden when the profile is installed and the app is not, waits up to 90 seconds for the app, and closes Chrome again. If the app does not appear, it opens the profile and prints what to do.
+- `/Applications/Aldine.app` opens the installed app, for Launchpad and Spotlight. Before the install it opens Aldine in a Chrome window with `--app`.
+- A re-run builds `/Applications/Aldine.app` again and sets the Dock tile to the installed app.
+
+To get this on a box that is set up already:
+
+1. Deploy a release of aldine that has the new manifest.
+2. Run `./setup.sh` on the box. It opens the updated Chrome profile.
+3. Install the profile in System Settings > General > Device Management: open "Aldine: Chrome" and click Install.
+4. Run `./setup.sh` again. It installs the app and sets the Dock.
+
 ## Aldine app icon
 
-`setup.sh` builds `/Applications/Aldine.app`, which opens Aldine in a Chrome window of its own, with no tabs and no address bar. Its icon follows the macOS icon style: default, dark, clear and tinted.
+`setup.sh` builds `/Applications/Aldine.app`, which opens the Aldine app that Chrome installed. Its icon follows the macOS icon style: default, dark, clear and tinted. The icon of the installed app comes from the manifest of the web app.
 
 - `assets/aldine-icon/Aldine.icon` is the source, in the format of Icon Composer. The background is Forest `#2a3b2b`, or `#181715` in dark mode. The mark is Sage `#aac2af`.
 - `assets/aldine-icon/Assets.car` and `Aldine.icns` are compiled from it. `setup.sh` copies them into the app.

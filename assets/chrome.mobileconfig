@@ -20,7 +20,7 @@
   <key>PayloadUUID</key>
   <string>4E7C2B1A-9D3F-4A6E-8B25-1C0F7D9E3A41</string>
   <key>PayloadVersion</key>
-  <integer>1</integer>
+  <integer>2</integer>
   <key>PayloadContent</key>
   <array>
     <dict>
@@ -51,6 +51,22 @@
       <false/>
       <key>UrlKeyedAnonymizedDataCollectionEnabled</key>
       <false/>
+      <!-- Chrome installs Aldine as an app. The app opens in a window of its own, with no tabs
+           and no address bar, and macOS shows it as its own app in the Dock. Chrome puts it
+           in ~/Applications/Chrome Apps.localized/Aldine.app after it runs with this policy. -->
+      <key>WebAppInstallForceList</key>
+      <array>
+        <dict>
+          <key>url</key>
+          <string>http://localhost:5173/</string>
+          <key>default_launch_container</key>
+          <string>window</string>
+          <key>custom_name</key>
+          <string>Aldine</string>
+          <key>fallback_app_name</key>
+          <string>Aldine</string>
+        </dict>
+      </array>
     </dict>
   </array>
 </dict>
