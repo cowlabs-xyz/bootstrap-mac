@@ -268,8 +268,8 @@ if [ "$ROLE" = "dev" ]; then
 fi
 
 echo "==> macOS defaults: customisation"
-# Dock: auto-hide
-defaults write com.apple.dock autohide -bool true
+# Dock: always shown, so staff find Aldine on it
+defaults write com.apple.dock autohide -bool false
 # Stage Manager: off
 defaults write com.apple.WindowManager GloballyEnabled -bool false
 # Desktop widgets: hidden (both standard desktop and Stage Manager modes)
@@ -490,8 +490,8 @@ sudo touch "$ALDINE_APP"
 
 echo "==> Dock"
 # The Dock holds only what a box needs, after Finder, which is always first:
-# Aldine, Chrome, Terminal on a dev box, and System Settings. A re-run sets
-# it again.
+# Aldine, Terminal on a dev box, and System Settings. Staff open Aldine from
+# its own tile, not from Chrome. A re-run sets it again.
 dock_tile() {
   echo "<dict><key>tile-data</key><dict><key>file-data</key><dict><key>_CFURLString</key><string>$1</string><key>_CFURLStringType</key><integer>0</integer></dict></dict></dict>"
 }
@@ -501,7 +501,7 @@ dock_tile() {
 # /Applications/Aldine.app.
 ALDINE_DOCK_APP="$ALDINE_APP"
 [ -d "$ALDINE_CHROME_APP" ] && ALDINE_DOCK_APP="$ALDINE_CHROME_APP"
-DOCK_APPS=("$ALDINE_DOCK_APP" "/Applications/Google Chrome.app")
+DOCK_APPS=("$ALDINE_DOCK_APP")
 [ "$ROLE" = "dev" ] && DOCK_APPS+=("/System/Applications/Utilities/Terminal.app")
 DOCK_APPS+=("/System/Applications/System Settings.app")
 DOCK_TILES=()
@@ -520,17 +520,40 @@ echo "==> Desktop picture and user picture"
 WALLPAPER="/Library/Desktop Pictures/Aldine.png"
 USER_PICTURE="/Library/User Pictures/Aldine.png"
 # A fresh macOS has neither folder: its own pictures are under /System.
+# A picture that is already set stays as it is. A new image in assets/ sets
+# both again.
+PICTURES_CHANGED=no
 sudo mkdir -p "/Library/Desktop Pictures" "/Library/User Pictures"
-sudo cp assets/wallpaper.png "$WALLPAPER"
-sudo cp assets/user-picture.png "$USER_PICTURE"
+if ! cmp -s assets/wallpaper.png "$WALLPAPER" || ! cmp -s assets/user-picture.png "$USER_PICTURE"; then
+  sudo cp assets/wallpaper.png "$WALLPAPER"
+  sudo cp assets/user-picture.png "$USER_PICTURE"
+  PICTURES_CHANGED=yes
+fi
 # macOS shows an emoji or Memoji avatar (AvatarRepresentation) and a photo
-# (JPEGPhoto) before Picture, so delete both.
-sudo dscl . -delete "/Users/$USER" AvatarRepresentation &>/dev/null || true
-sudo dscl . -delete "/Users/$USER" JPEGPhoto &>/dev/null || true
-sudo dscl . -create "/Users/$USER" Picture "$USER_PICTURE"
-# Setting the desktop picture needs a logged-in session, and macOS can ask
-# once to let this terminal control System Events.
-if ! osascript -e "tell application \"System Events\" to tell every desktop to set picture to POSIX file \"$WALLPAPER\"" &>/dev/null; then
+# (JPEGPhoto) before Picture, so the user picture is the Aldine mark only
+# with neither.
+user_picture_is_aldine() {
+  ! dscl . -read "/Users/$USER" AvatarRepresentation 2>/dev/null | grep -q "^AvatarRepresentation" &&
+    ! dscl . -read "/Users/$USER" JPEGPhoto 2>/dev/null | grep -q "^JPEGPhoto" &&
+    [ "$(dscl . -read "/Users/$USER" Picture 2>/dev/null | tail -1 | sed "s/^Picture: //; s/^ //")" = "$USER_PICTURE" ]
+}
+if [ "$PICTURES_CHANGED" = yes ] || ! user_picture_is_aldine; then
+  sudo dscl . -delete "/Users/$USER" AvatarRepresentation &>/dev/null || true
+  sudo dscl . -delete "/Users/$USER" JPEGPhoto &>/dev/null || true
+  sudo dscl . -create "/Users/$USER" Picture "$USER_PICTURE"
+else
+  echo "    the user picture is already the Aldine mark"
+fi
+# Reading and setting the desktop picture need a logged-in session, and macOS
+# can ask once to let this terminal control System Events.
+desktop_picture_is_aldine() {
+  local pictures
+  pictures="$(osascript -e 'tell application "System Events" to get picture of every desktop' 2>/dev/null)" || return 1
+  [ -n "$pictures" ] && ! printf '%s\n' "$pictures" | sed 's/, /\n/g' | grep -qvxF "$WALLPAPER"
+}
+if [ "$PICTURES_CHANGED" = no ] && desktop_picture_is_aldine; then
+  echo "    the desktop picture is already the Aldine mark"
+elif ! osascript -e "tell application \"System Events\" to tell every desktop to set picture to POSIX file \"$WALLPAPER\"" &>/dev/null; then
   echo "    Could not set the desktop picture. Log in at the box and run ./setup.sh"
   echo "    there, or pick $WALLPAPER in System Settings > Wallpaper."
 fi
@@ -1152,8 +1175,9 @@ if [ "$ROLE" = "prod" ]; then
   else
     echo "    -       Aldine is not deployed yet, so Chrome has not installed it as an app. Deploy it, then run ./setup.sh again"
   fi
-  check "the Dock holds Chrome and System Settings" 'defaults read com.apple.dock persistent-apps | grep -qE "Google(%20| )Chrome\.app" && ! defaults read com.apple.dock persistent-apps | grep -q "Safari.app"'
-  check "the user picture is the Aldine mark" '! dscl . -read "/Users/$USER" AvatarRepresentation 2>/dev/null | grep -q "^AvatarRepresentation" && [ "$(dscl . -read "/Users/$USER" Picture | tail -1 | sed "s/^Picture: //; s/^ //")" = "$USER_PICTURE" ]'
+  check "the Dock holds System Settings, and not Chrome or Safari" 'defaults read com.apple.dock persistent-apps | grep -qE "System(%20| )Settings\.app" && ! defaults read com.apple.dock persistent-apps | grep -qE "Google(%20| )Chrome\.app|Safari\.app"'
+  check "the Dock stays shown" '[ "$(defaults read com.apple.dock autohide 2>/dev/null)" != 1 ]'
+  check "the user picture is the Aldine mark" 'user_picture_is_aldine'
   check "the screen locks 5 seconds after the display sleeps" 'sysadminctl -screenLock status 2>&1 | grep -q "$SCREEN_LOCK_STATUS"'
   check_aldine_settings
   check "Ollama $OLLAMA_VERSION answers" 'curl -fsS http://127.0.0.1:11434/api/version | grep -q "\"$OLLAMA_VERSION\""'
