@@ -27,10 +27,6 @@ echo "==> Role: $ROLE"
 
 eval "$(/opt/homebrew/bin/brew shellenv 2>/dev/null || /usr/local/bin/brew shellenv)"
 
-# A dev box keeps a clone of aldine, as it builds and tests it. A customer box
-# has no clone: a deploy copies a release of box-server to it.
-ALDINE_DIR="$HOME/git/cowlabs/aldine"
-
 # The settings of box-server, on every box. The agent ai.aldine.box-server
 # reads them with sh at each start, so each setting is KEY=value. setup.sh
 # writes the file. See "Aldine settings" in the README.
@@ -898,6 +894,9 @@ if ! grep -q "brew shellenv" "$HOME/.zprofile" 2>/dev/null; then
 fi
 
 if [ "$ROLE" = "dev" ]; then
+  # A dev box keeps a clone of aldine, as it builds and tests it. A customer
+  # box has no clone: a deploy copies a release of box-server to it.
+  ALDINE_DIR="$HOME/git/cowlabs/aldine"
   echo "==> Aldine checkout"
   # The dev box builds and tests aldine, and runs its CI. Activate mise in the
   # shells, so SSH sessions and the CI runner get the pinned tools.

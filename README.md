@@ -76,9 +76,9 @@ Both roles add `brew shellenv` to `~/.zprofile`, so SSH sessions get the Homebre
 | `ALDINE_BOX_ID` | the box name, such as `acme-1` | `dev-box` |
 | `ALDINE_DEPLOY_MODE` | not set, so the debug service is off | `dev`, which turns on the debug service |
 | `ALDINE_ADDR` | `127.0.0.1:5173` | `127.0.0.1:5173` |
-| `ALDINE_DATA_DIR` | `$HOME/aldine`, as an absolute path | the same, or the absolute path in box.env |
+| `ALDINE_DATA_DIR` | `$HOME/aldine`, as an absolute path | the same. To use another folder, add its absolute path to box.env by hand. A re-run keeps it |
 | `ALDINE_BACKUP_DIR` | `/Volumes/Aldine Backups`, when the box has a backup drive | the same |
-| `ALDINE_LOGO_DEV_SECRET_KEY` | the logo.dev key, when you give one | the value in box.env, when set |
+| `ALDINE_LOGO_DEV_SECRET_KEY` | the logo.dev key, when you give one | not set. Add it to box.env by hand. A re-run keeps it |
 | `ALDINE_LOG_FORMAT` | `console` | `console` |
 
 `setup.sh` also makes the data folder, as `box-server` does not. On both roles, it ends with a check of box.env: mode 600, the box id, the deploy mode, `ALDINE_ADDR` and the data folder. A deploy of aldine reads the box id from box.env. `box-server` reads the deploy mode from it.
