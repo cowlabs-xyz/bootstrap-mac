@@ -146,102 +146,44 @@ if [ "$ROLE" = "prod" ]; then
   fi
 fi
 
-# The backup drive: an encrypted APFS volume on an external disk, which
-# box-server backs up to every night. FileVault covers only the Mac's own disk,
-# so the volume has a passphrase of its own. The login keychain holds it, so an
-# agent unlocks the volume after a restart. 1Password and the office keep it too.
-BACKUP_VOLUME="Aldine Backups"
-BACKUP_DIR="/Volumes/$BACKUP_VOLUME"
-BACKUP_SERVICE="ai.aldine.backup-volume"
-BACKUP_LABEL="ai.aldine.backup-volume"
-BACKUP_PLIST="$HOME/Library/LaunchAgents/$BACKUP_LABEL.plist"
-BACKUP_CONTAINER=""
-BACKUP_PASSPHRASE=""
+# Time Machine backs up the box to an external drive every hour. FileVault
+# covers only the Mac's own disk, so Time Machine encrypts the backups with a
+# password of its own. It keeps the password in the System keychain, and
+# unlocks the drive by itself after a restart. setup.sh cannot choose the
+# drive: tmutil setdestination needs Full Disk Access, and Terminal has none.
+# A person chooses it in System Settings, which also turns on the encryption.
+TM_SETTINGS="x-apple.systempreferences:com.apple.Time-Machine-Settings.extension"
 
-# The UUID of the backup volume, on any disk that is plugged in, or nothing.
-backup_volume_uuid() {
+# The name of the Time Machine backup disk, or nothing.
+time_machine_disk() {
+  tmutil destinationinfo -X 2>/dev/null | plutil -convert json -o - - 2>/dev/null |
+    jq -r '.Destinations[0].Name // empty' 2>/dev/null || true
+}
+
+# True when an APFS volume holds Time Machine backups, and every such volume is
+# encrypted.
+time_machine_encrypted() {
   diskutil apfs list -plist | plutil -convert json -o - - |
-    jq -r --arg name "$BACKUP_VOLUME" '.Containers[].Volumes[] | select(.Name == $name) | .APFSVolumeUUID' |
-    head -n 1
+    jq -e '[.Containers[].Volumes[] | select(.Roles | index("Backup"))] | length > 0 and all(.FileVault)' >/dev/null
 }
 
-# Each APFS container on an external disk, as "<container> <free bytes> <volumes>".
-# A disk image, such as an Xcode simulator runtime, is not internal either, so it
-# is left out by its bus protocol.
-backup_containers() {
-  diskutil apfs list -plist | plutil -convert json -o - - |
-    jq -r '.Containers[] | [.ContainerReference, .DesignatedPhysicalStore, .CapacityFree, ([.Volumes[].Name] | join(", "))] | @tsv' |
-    while IFS=$'\t' read -r container store free names; do
-      if diskutil info -plist "$store" | plutil -convert json -o - - |
-        jq -e '.Internal == false and .BusProtocol != "Disk Image"' >/dev/null; then
-        printf '%s\t%s\t%s\n' "$container" "$free" "$names"
-      fi
-    done
-}
-
-# Ask for the passphrase of the backup volume, twice. A new passphrase has 20
-# characters or more. An existing one is checked against the volume instead.
-read_backup_passphrase() {
-  while :; do
-    read -rsp "    $1: " BACKUP_PASSPHRASE
-    echo
-    if [ "$2" = new ] && [ "${#BACKUP_PASSPHRASE}" -lt 20 ]; then
-      echo "    A passphrase has 20 characters or more."
-      continue
-    fi
-    local again
-    read -rsp "    The same passphrase again: " again
-    echo
-    [ "$again" = "$BACKUP_PASSPHRASE" ] && break
-    echo "    The two do not match."
-  done
-}
-
-BACKUP_UUID="$(backup_volume_uuid)"
-if [ -n "$BACKUP_UUID" ]; then
-  echo "    backup volume: $BACKUP_VOLUME, already there"
-  # A new Mac with a drive that holds backups: the passphrase is in 1Password.
-  if ! security find-generic-password -s "$BACKUP_SERVICE" &>/dev/null; then
-    until [ -n "$BACKUP_PASSPHRASE" ] && printf '%s' "$BACKUP_PASSPHRASE" | diskutil apfs unlockVolume "$BACKUP_UUID" -stdinpassphrase -verify &>/dev/null; do
-      read_backup_passphrase "Passphrase of $BACKUP_VOLUME, from 1Password" existing
-    done
-  fi
+TM_DISK="$(time_machine_disk)"
+if [ -n "$TM_DISK" ]; then
+  echo "    Time Machine: backs up to $TM_DISK"
 else
-  # Adding a volume keeps what the disk holds, such as a copy of older data.
-  BACKUP_CHOICES="$(backup_containers)"
-  if [ -z "$BACKUP_CHOICES" ]; then
-    echo "    No external APFS disk is plugged in, so the box gets no backup drive."
-    echo "    Plug in the backup drive and run ./setup.sh again. A drive that is not"
-    echo "    APFS must be erased as APFS first, in Disk Utility."
-  else
-    echo "    The backup drive gets a new encrypted volume, $BACKUP_VOLUME."
-    echo "    What the drive holds stays. The external APFS disks:"
-    i=0
-    while IFS=$'\t' read -r container free names; do
-      i=$((i + 1))
-      echo "      $i) $container, $((free / 1000000000)) GB free, holds: ${names:-nothing}"
-    done <<< "$BACKUP_CHOICES"
-    while :; do
-      read -rp "    Backup drive [1-$i, empty to skip]: " choice
-      [ -z "$choice" ] && break
-      if [[ "$choice" =~ ^[0-9]+$ ]] && [ "$choice" -ge 1 ] && [ "$choice" -le "$i" ]; then
-        BACKUP_CONTAINER="$(sed -n "${choice}p" <<< "$BACKUP_CHOICES" | cut -f1)"
-        break
-      fi
-    done
-    if [ -n "$BACKUP_CONTAINER" ]; then
-      echo "    Make a passphrase in 1Password, titled \"${BOX_NAME:-$(hostname -s)} backup drive\"."
-      echo "    Give a copy to the office, as with the FileVault recovery key."
-      read_backup_passphrase "Passphrase for $BACKUP_VOLUME" new
-    fi
-  fi
-fi
-
-# The passphrase goes in the login keychain, which a session over SSH holds
-# locked. Unlock it now, while a person is at the keyboard.
-if [ -n "$BACKUP_PASSPHRASE" ] && { [ -n "${SSH_CONNECTION:-}" ] || ! security show-keychain-info "$HOME/Library/Keychains/login.keychain-db" &>/dev/null; }; then
-  echo "    The login keychain is locked. Type the password of $USER to unlock it."
-  security unlock-keychain "$HOME/Library/Keychains/login.keychain-db"
+  echo "    Time Machine has no backup disk. Plug in the backup drive. Then, in System Settings > General > Time Machine:"
+  echo "      1. Click Add Backup Disk, and choose the drive. If Time Machine asks to erase it, erase it."
+  echo "      2. Turn on Encrypt Backup. Make the password in 1Password first, titled \"${BOX_NAME:-$(hostname -s)} Time Machine\"."
+  echo "         Give a copy to the office, as with the FileVault recovery key."
+  echo "      3. Keep the backup frequency at Automatically Every Hour."
+  open "$TM_SETTINGS" 2>/dev/null || true
+  while :; do
+    read -rp "    Press Enter when Time Machine shows the disk, or type skip: " answer
+    [ "$answer" = skip ] && break
+    TM_DISK="$(time_machine_disk)"
+    [ -n "$TM_DISK" ] && break
+    echo "    Time Machine has no backup disk yet."
+  done
 fi
 
 # A tagged auth key gives the node the identity of tag:aldine-$ROLE rather
@@ -849,73 +791,31 @@ else
   echo "    (got: ${OLLAMA_RUNNING:-nothing}). See ~/Library/Logs/$OLLAMA_LABEL.log"
 fi
 
-echo "==> Backup drive"
-if [ -n "$BACKUP_CONTAINER" ]; then
-  if ! printf '%s' "$BACKUP_PASSPHRASE" | diskutil apfs addVolume "$BACKUP_CONTAINER" APFS "$BACKUP_VOLUME" -stdinpassphrase; then
-    echo "    FAILED to add $BACKUP_VOLUME to $BACKUP_CONTAINER. Check the drive in Disk Utility, and run ./setup.sh again." >&2
-    exit 1
-  fi
-  BACKUP_UUID="$(backup_volume_uuid)"
+echo "==> Backups"
+# box-server took its own backups to the volume Aldine Backups until Time
+# Machine took over. Remove the agent that unlocked the volume, and its
+# passphrase. The volume stays on the drive until Time Machine erases it, or
+# you delete it in Disk Utility.
+OLD_BACKUP_LABEL="ai.aldine.backup-volume"
+OLD_BACKUP_PLIST="$HOME/Library/LaunchAgents/$OLD_BACKUP_LABEL.plist"
+if [ -f "$OLD_BACKUP_PLIST" ]; then
+  launchctl bootout "gui/$(id -u)/$OLD_BACKUP_LABEL" 2>/dev/null || true
+  rm -f "$OLD_BACKUP_PLIST"
+  echo "    removed the agent $OLD_BACKUP_LABEL"
 fi
-if [ -n "$BACKUP_PASSPHRASE" ]; then
-  # Only security reads the item, so the agent reads it with no prompt.
-  security add-generic-password -U -a "$BACKUP_VOLUME" -s "$BACKUP_SERVICE" \
-    -T /usr/bin/security -w "$BACKUP_PASSPHRASE" "$HOME/Library/Keychains/login.keychain-db"
+if security find-generic-password -s "$OLD_BACKUP_LABEL" &>/dev/null; then
+  # A session over SSH holds the login keychain locked.
+  if ! security delete-generic-password -s "$OLD_BACKUP_LABEL" &>/dev/null; then
+    echo "    The login keychain is locked. Type the password of $USER to unlock it."
+    security unlock-keychain "$HOME/Library/Keychains/login.keychain-db"
+    security delete-generic-password -s "$OLD_BACKUP_LABEL" >/dev/null
+  fi
+  echo "    removed the passphrase of the volume Aldine Backups from the keychain"
 fi
-if [ -n "$BACKUP_UUID" ]; then
-  # The agent unlocks and mounts the volume at login, and every 5 minutes, so a
-  # drive that is plugged in again comes back. It does nothing while the volume
-  # is mounted, or no disk holds it.
-  BACKUP_PLIST_WANT="$(cat <<EOF
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<!-- Written by bootstrap-mac setup.sh. Edits are overwritten. -->
-<plist version="1.0">
-<dict>
-  <key>Label</key>
-  <string>$BACKUP_LABEL</string>
-  <key>ProgramArguments</key>
-  <array>
-    <string>/bin/sh</string>
-    <string>-c</string>
-    <string>[ -d "$BACKUP_DIR" ] &amp;&amp; exit 0; uuid="\$(diskutil apfs list -plist | plutil -convert json -o - - | /usr/bin/jq -r '.Containers[].Volumes[] | select(.Name == "$BACKUP_VOLUME") | .APFSVolumeUUID' | head -n 1)"; [ -n "\$uuid" ] || exit 0; /usr/bin/security find-generic-password -s "$BACKUP_SERVICE" -w | diskutil apfs unlockVolume "\$uuid" -stdinpassphrase</string>
-  </array>
-  <key>RunAtLoad</key>
-  <true/>
-  <key>StartInterval</key>
-  <integer>300</integer>
-  <key>StandardOutPath</key>
-  <string>$HOME/Library/Logs/$BACKUP_LABEL.log</string>
-  <key>StandardErrorPath</key>
-  <string>$HOME/Library/Logs/$BACKUP_LABEL.log</string>
-</dict>
-</plist>
-EOF
-)"
-  if [ "$(cat "$BACKUP_PLIST" 2>/dev/null)" != "$BACKUP_PLIST_WANT" ]; then
-    mkdir -p "$HOME/Library/LaunchAgents" "$HOME/Library/Logs"
-    echo "$BACKUP_PLIST_WANT" > "$BACKUP_PLIST"
-    launchctl bootout "gui/$(id -u)/$BACKUP_LABEL" 2>/dev/null || true
-  fi
-  launchctl bootstrap "gui/$(id -u)" "$BACKUP_PLIST" 2>/dev/null || true
-  launchctl kickstart "gui/$(id -u)/$BACKUP_LABEL" || true
-  for _ in $(seq 1 15); do
-    [ -d "$BACKUP_DIR" ] && break
-    sleep 1
-  done
-  if [ -d "$BACKUP_DIR" ]; then
-    # Keep the permissions that box-server sets, and keep Spotlight out of the
-    # backups. A new volume belongs to root, and ownership is on, so the user
-    # who runs box-server must own it, or the nightly backup cannot write.
-    sudo diskutil enableOwnership "$BACKUP_DIR" >/dev/null
-    sudo chown "$USER":staff "$BACKUP_DIR"
-    sudo mdutil -i off "$BACKUP_DIR" >/dev/null
-    echo "    $BACKUP_DIR is mounted"
-  else
-    echo "    WARNING: $BACKUP_VOLUME does not mount. See ~/Library/Logs/$BACKUP_LABEL.log"
-  fi
+if [ -n "$TM_DISK" ]; then
+  echo "    Time Machine backs up to $TM_DISK"
 else
-  echo "    no backup drive: the box takes no backups"
+  echo "    Time Machine has no backup disk: the box takes no backups"
 fi
 
 echo "==> Log rotation"
@@ -997,16 +897,10 @@ echo "==> Aldine settings"
 ALDINE_ENV_HEADER="# Written by bootstrap-mac setup.sh. A re-run writes the ALDINE_ settings that setup.sh sets, and keeps other lines."
 ALDINE_ENV_SETS='^[[:space:]]*(export[[:space:]]+)?'
 ALDINE_DATA_DIR="$HOME/aldine"
-ALDINE_BACKUP_SET=""
 if [ "$ROLE" = "prod" ]; then
   # A customer box carries its own id, and has no debug service.
   ALDINE_BOX_ID="$BOX_NAME"
   ALDINE_DEPLOY_MODE=""
-  # A re-run with the drive unplugged keeps the setting, so it does not turn
-  # backups off.
-  if [ -n "$BACKUP_UUID" ] || [ "$(box_env_value ALDINE_BACKUP_DIR)" = "$BACKUP_DIR" ] || [ "$(mise_local_value ALDINE_BACKUP_DIR)" = "$BACKUP_DIR" ]; then
-    ALDINE_BACKUP_SET="$BACKUP_DIR"
-  fi
 else
   # The dev box runs as dev-box, with the debug service on.
   ALDINE_BOX_ID="dev-box"
@@ -1020,15 +914,10 @@ else
     fi
   done
   LOGO_DEV_KEY="$(aldine_setting ALDINE_LOGO_DEV_SECRET_KEY)"
-  if [ -n "$BACKUP_UUID" ]; then
-    ALDINE_BACKUP_SET="$BACKUP_DIR"
-  else
-    ALDINE_BACKUP_SET="$(aldine_setting ALDINE_BACKUP_DIR)"
-  fi
 fi
 
-# One KEY=value line. A value with a space or another sign that sh reads, such
-# as the backup folder, goes in single quotes.
+# One KEY=value line. A value with a space or another sign that sh reads goes
+# in single quotes.
 env_line() {
   case "$2" in
     *[!A-Za-z0-9_./:@-]*) printf "%s='%s'\n" "$1" "$(printf '%s' "$2" | sed "s/'/'\\\\''/g")" ;;
@@ -1050,7 +939,9 @@ managed_setting ALDINE_BOX_ID "$ALDINE_BOX_ID"
 managed_setting ALDINE_DEPLOY_MODE "$ALDINE_DEPLOY_MODE"
 managed_setting ALDINE_ADDR "$ALDINE_ADDR"
 managed_setting ALDINE_DATA_DIR "$ALDINE_DATA_DIR"
-managed_setting ALDINE_BACKUP_DIR "$ALDINE_BACKUP_SET"
+# box-server no longer reads ALDINE_BACKUP_DIR, as Time Machine backs up the
+# box. The empty value removes it from box.env.
+managed_setting ALDINE_BACKUP_DIR ""
 managed_setting ALDINE_LOGO_DEV_SECRET_KEY "$LOGO_DEV_KEY"
 managed_setting ALDINE_LOG_FORMAT console
 
@@ -1073,7 +964,7 @@ if [ -n "$ALDINE_NOT_CARRIED" ]; then
 fi
 # A setting that setup.sh takes from mise.local.toml, with a value that it
 # cannot read, such as one with an escaped quote. box.env does not get it.
-for key in ALDINE_DATA_DIR ALDINE_BACKUP_DIR ALDINE_LOGO_DEV_SECRET_KEY $ALDINE_CARRY_KEYS; do
+for key in ALDINE_DATA_DIR ALDINE_LOGO_DEV_SECRET_KEY $ALDINE_CARRY_KEYS; do
   if printf '%s\n' "$ALDINE_LOCAL_KEYS" | grep -qxF "$key" && [ -z "$(mise_local_value "$key")" ] && [ -z "$(box_env_value "$key")" ]; then
     echo "    WARNING: $key in mise.local.toml is empty, or setup.sh cannot read it. Add it to $ALDINE_ENV by hand."
   fi
@@ -1158,6 +1049,12 @@ check_aldine_settings() {
   else
     echo "    -       no logo.dev key: vendors show their initials"
   fi
+  check "box-server takes no backups of its own" '[ -z "$(box_env_value ALDINE_BACKUP_DIR)" ] && [ ! -f "$OLD_BACKUP_PLIST" ]'
+}
+# Time Machine, on a box with a backup disk.
+check_time_machine() {
+  check "Time Machine encrypts its backups" 'time_machine_encrypted'
+  check "Time Machine backs up the data folder $ALDINE_DATA_DIR" 'tmutil isexcluded "$ALDINE_DATA_DIR" | grep -q "^\[Included\]"'
 }
 
 if [ "$ROLE" = "prod" ]; then
@@ -1190,16 +1087,9 @@ if [ "$ROLE" = "prod" ]; then
   check_aldine_settings
   check "Ollama $OLLAMA_VERSION answers" 'curl -fsS http://127.0.0.1:11434/api/version | grep -q "\"$OLLAMA_VERSION\""'
   check "the box rotates its logs" 'launchctl print "gui/$(id -u)/$ROTATE_LABEL" | grep -q "last exit code = 0"'
-  # A customer box holds the only copy of its data, so it needs its drive.
-  if [ -z "$BACKUP_UUID" ]; then
-    check "a backup drive with $BACKUP_VOLUME is plugged in" 'false'
-  else
-    check "the backup volume $BACKUP_VOLUME is encrypted" 'diskutil info "$BACKUP_DIR" | grep -qE "FileVault: +Yes"'
-    check "the backup volume is mounted and writable" 'touch "$BACKUP_DIR/.setup-check" && rm "$BACKUP_DIR/.setup-check"'
-    check "the keychain holds the passphrase of the backup volume" 'security find-generic-password -s "$BACKUP_SERVICE"'
-    check "the backup volume unlocks at login" 'launchctl print "gui/$(id -u)/$BACKUP_LABEL"'
-    check "the box backs up to $BACKUP_DIR" '[ "$(box_env_value ALDINE_BACKUP_DIR)" = "$BACKUP_DIR" ]'
-  fi
+  # A customer box holds the only copy of its data, so it needs its backups.
+  check "Time Machine backs up to a disk" '[ -n "$(time_machine_disk)" ]'
+  check_time_machine
   WIFI_WANT="${WIFI_WANT:-$(cat "$WIFI_FILE" 2>/dev/null || true)}"
   if [ -n "$WIFI_WANT" ]; then
     check "the office wifi $WIFI_WANT is saved" 'networksetup -listpreferredwirelessnetworks "$WIFI_DEVICE" | sed "s/^[[:space:]]*//" | grep -qxF "$WIFI_WANT"'
@@ -1215,13 +1105,16 @@ if [ "$ROLE" = "prod" ]; then
   echo "  mise run box:deploy <box-tag> --box $USER@$BOX_NAME"
 else
   check_aldine_settings
+  if [ -n "$(time_machine_disk)" ]; then
+    check_time_machine
+  fi
   echo
   if [ "$FAILED" -gt 0 ]; then
     echo "$FAILED check(s) failed. Fix them, and run ./setup.sh again."
     exit 1
   fi
-  if [ ! -d "$BACKUP_DIR" ]; then
-    echo "WARNING: no backup drive is mounted, so this box takes no backups."
+  if [ -z "$(time_machine_disk)" ]; then
+    echo "WARNING: Time Machine has no backup disk, so this box takes no backups."
     echo
   fi
   echo "Done. Remaining manual steps:"
