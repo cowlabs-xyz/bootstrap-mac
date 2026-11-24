@@ -40,7 +40,7 @@ unless you pass `--macos`, which reboots.
 
 - `bootstrap.sh` — curl-able entry point (Homebrew + clone + hand-off)
 - `update.sh` — routine updates: this repo, Homebrew, the toolchain, macOS
-- `setup.sh` — main setup: `brew bundle`, macOS defaults, security lockdown, Siri, analytics, AirDrop and Handoff off, the bundled App Store apps removed, Google Chrome, an Aldine app that opens Aldine as a Chrome app, a Dock with Aldine, Chrome and System Settings (and Terminal on dev), the Aldine mark as the desktop picture and the user picture (images in `assets/`; the desktop picture needs a logged-in session),
+- `setup.sh` — main setup: `brew bundle`, macOS defaults, security lockdown, Siri, analytics, AirDrop and Handoff off, the bundled App Store apps removed, Google Chrome, an Aldine app that opens Aldine as a Chrome app, a Dock that stays shown, with Aldine and System Settings (and Terminal on dev), the Aldine mark as the desktop picture and the user picture, set only when not set yet (images in `assets/`; the desktop picture needs a logged-in session),
   headless server behaviour, Remote Login (SSH), Screen Sharing for the box user only, Tailscale, Ollama, log rotation, the Aldine settings in `~/.config/aldine/box.env`
 - `rotate-logs.sh` — rotates the Aldine and Ollama logs; `setup.sh` installs it
 - `Brewfile` — packages for all machines
