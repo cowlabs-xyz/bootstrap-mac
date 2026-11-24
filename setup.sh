@@ -600,6 +600,57 @@ else
   fi
 fi
 
+echo "==> Screen Sharing"
+# The same way as Remote Login: enable the launchd service directly. Then limit
+# access to the box user, and turn off the two ways in that skip that list.
+# - Only these users: the com.apple.access_screensharing group holds $USER only.
+# - Anyone may request permission: ScreenSharingReqPermEnabled is false.
+# - VNC viewers may control screen with a password: VNCLegacyConnectionsEnabled
+#   is false.
+# Both roles get this, as the dev box is also used through Screen Sharing.
+SS_LABEL="system/com.apple.screensharing"
+SS_PLIST="/System/Library/LaunchDaemons/com.apple.screensharing.plist"
+SS_GROUP="com.apple.access_screensharing"
+SS_PREFS="/Library/Preferences/com.apple.RemoteManagement"
+# The members of the access group, one per line.
+screen_sharing_members() {
+  dscl . -read "/Groups/$SS_GROUP" GroupMembership 2>/dev/null | sed '1s/^GroupMembership://' | tr -s ' ' '\n' | sed '/^$/d'
+}
+# True when the service runs, only $USER may connect, and both other ways in are off.
+screen_sharing_ready() {
+  sudo launchctl print "$SS_LABEL" &>/dev/null &&
+    [ "$(screen_sharing_members)" = "$USER" ] &&
+    [ "$(sudo defaults read "$SS_PREFS" ScreenSharingReqPermEnabled 2>/dev/null)" = 0 ] &&
+    [ "$(sudo defaults read "$SS_PREFS" VNCLegacyConnectionsEnabled 2>/dev/null)" = 0 ]
+}
+sudo dseditgroup -o read "$SS_GROUP" &>/dev/null || sudo dseditgroup -o create -q "$SS_GROUP"
+for member in $(screen_sharing_members); do
+  [ "$member" = "$USER" ] || sudo dseditgroup -o edit -d "$member" -t user "$SS_GROUP"
+done
+sudo dseditgroup -o edit -a "$USER" -t user "$SS_GROUP"
+sudo defaults write "$SS_PREFS" ScreenSharingReqPermEnabled -bool false
+sudo defaults write "$SS_PREFS" VNCLegacyConnectionsEnabled -bool false
+if ! sudo launchctl print "$SS_LABEL" &>/dev/null; then
+  sudo launchctl enable "$SS_LABEL" || true
+  sudo launchctl bootstrap system "$SS_PLIST" 2>/dev/null || true
+fi
+if screen_sharing_ready; then
+  echo "    on, for $USER only"
+else
+  echo "    FAILED to set up Screen Sharing from the script. Set it by hand in System Settings > General > Sharing:"
+  echo "      1. Turn on Screen Sharing, and click its (i) button."
+  echo "      2. Allow access for: Only these users. Remove every user but $USER."
+  echo "      3. Turn off Anyone may request permission to control screen."
+  echo "      4. Turn off VNC viewers may control screen with password."
+  open "x-apple.systempreferences:com.apple.Sharing-Settings.extension" 2>/dev/null || true
+  while :; do
+    read -rp "    Press Enter when done, or type skip: " answer
+    [ "$answer" = skip ] && break
+    screen_sharing_ready && break
+    echo "    Screen Sharing is not set up yet."
+  done
+fi
+
 echo "==> Tailscale"
 # A system daemon, so it starts at boot with no login session. This is the open
 # source formula, not the GUI cask: only this variant serves Tailscale SSH on
@@ -1044,6 +1095,9 @@ check() {
     FAILED=$((FAILED + 1))
   fi
 }
+check_screen_sharing() {
+  check "Screen Sharing is on for $USER only" 'screen_sharing_ready'
+}
 # The settings in box.env, on both roles. A deploy of aldine reads the box id
 # and the deploy mode from box.env.
 check_aldine_settings() {
@@ -1107,6 +1161,7 @@ if [ "$ROLE" = "prod" ]; then
   # A customer box holds the only copy of its data, so it needs its backups.
   check "Time Machine backs up to a disk" '[ -n "$(time_machine_disk)" ]'
   check_time_machine
+  check_screen_sharing
   WIFI_WANT="${WIFI_WANT:-$(cat "$WIFI_FILE" 2>/dev/null || true)}"
   if [ -n "$WIFI_WANT" ]; then
     check "the office wifi $WIFI_WANT is saved" 'networksetup -listpreferredwirelessnetworks "$WIFI_DEVICE" | sed "s/^[[:space:]]*//" | grep -qxF "$WIFI_WANT"'
@@ -1122,6 +1177,7 @@ if [ "$ROLE" = "prod" ]; then
   echo "  mise run box:deploy <box-tag> --box $USER@$BOX_NAME"
 else
   check_aldine_settings
+  check_screen_sharing
   if [ -n "$(time_machine_disk)" ]; then
     check_time_machine
   fi
@@ -1136,7 +1192,6 @@ else
   fi
   echo "Done. Remaining manual steps:"
   echo "  - Set a hostname: sudo scutil --set ComputerName/HostName/LocalHostName"
-  echo "  - Enable Screen Sharing (System Settings > General > Sharing) if wanted"
   echo "  - Enable auto-login (System Settings > Users & Groups), so the Ollama"
   echo "    user agent comes back after an unattended reboot"
   echo "  - Verify the toolchain: cd ~/git/cowlabs/aldine && mise run build && mise run test"
