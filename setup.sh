@@ -401,6 +401,16 @@ fi
 ALDINE_URL="http://localhost:$ALDINE_PORT"
 # Where Chrome puts the app that its profile installs for Aldine.
 ALDINE_CHROME_APP="$HOME/Applications/Chrome Apps.localized/Aldine.app"
+# Whether Aldine answers on this Mac. Before the first deploy it does not.
+aldine_answers() {
+  curl -fsS -m 5 -o /dev/null "$ALDINE_URL/"
+}
+# Whether the Chrome profile on this Mac has the policy that installs Aldine as
+# an app. macOS writes the policies of an installed profile to Managed
+# Preferences. An older profile has no such policy.
+chrome_installs_aldine() {
+  sudo defaults read "/Library/Managed Preferences/$USER/com.google.Chrome" WebAppInstallForceList 2>/dev/null | grep -q "$ALDINE_URL/"
+}
 
 if [ "$ROLE" = "prod" ]; then
   echo "==> Chrome"
@@ -464,28 +474,34 @@ PREFS
     echo "    System Settings > Desktop & Dock > Default web browser."
   fi
   # The Chrome profile installs Aldine as a Chrome app (WebAppInstallForceList).
-  # Chrome installs it when it runs with the profile and reaches Aldine, and it
-  # writes an app of its own for it. That app is what the Dock shows.
-  if chrome_profile_installed && [ ! -d "$ALDINE_CHROME_APP" ]; then
-    # Start Chrome hidden, so no window opens on the box. Close it again after
-    # the install, but only when this step started it.
-    CHROME_WAS_RUNNING=false
-    pgrep -x "Google Chrome" &>/dev/null && CHROME_WAS_RUNNING=true
-    open -gj -a "Google Chrome" || true
-    for _ in $(seq 1 45); do
-      [ -d "$ALDINE_CHROME_APP" ] && break
-      sleep 2
-    done
-    if [ -d "$ALDINE_CHROME_APP" ]; then
-      sleep 5
-      [ "$CHROME_WAS_RUNNING" = false ] && { killall "Google Chrome" &>/dev/null || true; }
-    else
-      # Chrome did not install the app. The installed profile is an older one,
-      # or Aldine did not answer on localhost:$ALDINE_PORT.
+  # Chrome installs it when it runs with the policy and reaches Aldine, and it
+  # writes an app of its own for it. That app is what the Dock shows. Each case
+  # that stops the install says what to do.
+  if [ ! -d "$ALDINE_CHROME_APP" ] && chrome_profile_installed; then
+    if ! chrome_installs_aldine; then
       open assets/chrome.mobileconfig || true
-      echo "    Chrome did not install the Aldine app. Check that Aldine answers at $ALDINE_URL/."
-      echo "    Then install the updated Chrome profile: System Settings > General > Device"
-      echo "    Management, open \"Aldine: Chrome\", and click Install. Run ./setup.sh again."
+      echo "    The Chrome profile on this Mac does not install Aldine as an app. Install the"
+      echo "    updated profile: System Settings > General > Device Management, open"
+      echo "    \"Aldine: Chrome\", and click Install. Then run ./setup.sh again."
+    elif ! aldine_answers; then
+      echo "    Aldine does not answer at $ALDINE_URL/ yet. Deploy it, then run ./setup.sh"
+      echo "    again, so that Chrome installs it as an app."
+    else
+      # Start Chrome hidden, so no window opens on the box. Close it again after
+      # the install, but only when this step started it.
+      CHROME_WAS_RUNNING=false
+      pgrep -x "Google Chrome" &>/dev/null && CHROME_WAS_RUNNING=true
+      open -gj -a "Google Chrome" || true
+      for _ in $(seq 1 45); do
+        [ -d "$ALDINE_CHROME_APP" ] && break
+        sleep 2
+      done
+      if [ -d "$ALDINE_CHROME_APP" ]; then
+        sleep 5
+        [ "$CHROME_WAS_RUNNING" = false ] && { killall "Google Chrome" &>/dev/null || true; }
+      else
+        echo "    Chrome did not install the Aldine app within 90 seconds. Run ./setup.sh again."
+      fi
     fi
   fi
 fi
@@ -1160,8 +1176,14 @@ if [ "$ROLE" = "prod" ]; then
   check "Chrome opens Aldine" '[ -f "$CHROME_INITIAL" ] && [ -f "$CHROME_BOOKMARKS" ]'
   check "the Chrome profile blocks sign-in and data to Google" 'chrome_profile_installed'
   check "Chrome is the default browser" 'chrome_is_default'
-  check "Chrome installed Aldine as an app" '[ -d "$ALDINE_CHROME_APP" ]'
-  check "the Dock opens Aldine as that app, with its own icon" 'defaults read com.apple.dock persistent-apps | grep -qE "Chrome(%20| )Apps\.localized/Aldine\.app"'
+  # Chrome installs the app only once Aldine answers, so a setup before the first
+  # deploy skips these two checks.
+  if [ -d "$ALDINE_CHROME_APP" ] || aldine_answers; then
+    check "Chrome installed Aldine as an app" '[ -d "$ALDINE_CHROME_APP" ]'
+    check "the Dock opens Aldine as that app" 'defaults read com.apple.dock persistent-apps | grep -qE "Chrome(%20| )Apps\.localized/Aldine\.app"'
+  else
+    echo "    -       Aldine is not deployed yet, so Chrome has not installed it as an app. Deploy it, then run ./setup.sh again"
+  fi
   check "the Dock holds Chrome and System Settings" 'defaults read com.apple.dock persistent-apps | grep -qE "Google(%20| )Chrome\.app" && ! defaults read com.apple.dock persistent-apps | grep -q "Safari.app"'
   check "the user picture is the Aldine mark" '! dscl . -read "/Users/$USER" AvatarRepresentation 2>/dev/null | grep -q "^AvatarRepresentation" && [ "$(dscl . -read "/Users/$USER" Picture | tail -1 | sed "s/^Picture: //; s/^ //")" = "$USER_PICTURE" ]'
   check "the screen locks 5 seconds after the display sleeps" 'sysadminctl -screenLock status 2>&1 | grep -q "$SCREEN_LOCK_STATUS"'

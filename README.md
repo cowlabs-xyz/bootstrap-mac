@@ -335,11 +335,12 @@ To read the logs of a box from your laptop, run `mise run box:logs --box <host>`
 
 ## Aldine as an app
 
-Aldine opens from the Dock as an app of its own, with its own icon and a window with no tabs and no address bar.
+Aldine opens from the Dock as an app of its own, in a window with no tabs and no address bar.
 
 - The Chrome profile has the policy `WebAppInstallForceList` for `http://localhost:5173/`, with `default_launch_container` set to `window`. Chrome installs Aldine as an app when it runs with the profile and reaches Aldine. The manifest of the web app is `box-web/public/site.webmanifest` in aldine.
-- Chrome writes the app to `~/Applications/Chrome Apps.localized/Aldine.app`. The Dock tile is that app, so the icon of the running app is the Aldine tile.
-- `setup.sh` starts Chrome hidden when the profile is installed and the app is not, waits up to 90 seconds for the app, and closes Chrome again. If the app does not appear, it opens the profile and prints what to do.
+- Chrome writes the app to `~/Applications/Chrome Apps.localized/Aldine.app`. The Dock tile is that app, so the Dock shows Aldine running, not Chrome.
+- `setup.sh` starts Chrome hidden when the profile is installed and the app is not, waits up to 90 seconds for the app, and closes Chrome again. It does this only when the profile has the policy and Aldine answers. Otherwise it prints what to do: install the updated profile, or deploy Aldine and run setup again.
+- A setup before the first deploy skips the two checks of the app, as Chrome cannot install Aldine before it answers.
 - `/Applications/Aldine.app` opens the installed app, for Launchpad and Spotlight. Before the install it opens Aldine in a Chrome window with `--app`.
 - A re-run builds `/Applications/Aldine.app` again and sets the Dock tile to the installed app.
 
