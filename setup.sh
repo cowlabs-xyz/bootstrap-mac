@@ -575,7 +575,8 @@ echo "==> Server behaviour (headless)"
 # sleep 0 stops only idle sleep. disablesleep 1 also stops a sleep that a
 # person asks for, such as Apple menu > Sleep over Screen Sharing: the display
 # turns off and the box stays on the tailnet. powernap 0 keeps a box that
-# sleeps anyway off the tailnet, so the watch does not see it come and go.
+# sleeps anyway off the tailnet, so the watch does not get one answer from it
+# in each wake.
 sudo pmset -a sleep 0 disksleep 0 displaysleep 10 autorestart 1 womp 1 powernap 0
 sudo pmset -a disablesleep 1
 sudo systemsetup -setrestartfreeze on
