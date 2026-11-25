@@ -571,8 +571,13 @@ if [ "$ROLE" = "prod" ]; then
 fi
 
 echo "==> Server behaviour (headless)"
-# Never sleep; restart automatically after power failure or freeze
-sudo pmset -a sleep 0 disksleep 0 displaysleep 10 autorestart 1 womp 1
+# Never sleep; restart automatically after power failure or freeze.
+# sleep 0 stops only idle sleep. disablesleep 1 also stops a sleep that a
+# person asks for, such as Apple menu > Sleep over Screen Sharing: the display
+# turns off and the box stays on the tailnet. powernap 0 keeps a box that
+# sleeps anyway off the tailnet, so the watch does not see it come and go.
+sudo pmset -a sleep 0 disksleep 0 displaysleep 10 autorestart 1 womp 1 powernap 0
+sudo pmset -a disablesleep 1
 sudo systemsetup -setrestartfreeze on
 # A dev box keeps FileVault OFF for unattended reboots (boot blocks on
 # password), and relies on the physical security of our office. A prod box
@@ -1150,6 +1155,8 @@ check_time_machine() {
   check "Time Machine encrypts its backups" 'time_machine_encrypted'
   check "Time Machine backs up the data folder $ALDINE_DATA_DIR" 'tmutil isexcluded "$ALDINE_DATA_DIR" | grep -q "^\[Included\]"'
 }
+
+check "the Mac never sleeps, even when a person asks it to" 'pmset -g | grep -qE "^ *SleepDisabled[[:space:]]+1" && pmset -g | grep -qE "^ *powernap[[:space:]]+0"'
 
 if [ "$ROLE" = "prod" ]; then
   check "hostname is $BOX_NAME" '[ "$(scutil --get HostName)" = "$BOX_NAME" ]'
